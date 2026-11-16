@@ -12,6 +12,7 @@ Dipendenze: PyMuPDF, Pillow (Tkinter incluso in Python per Windows).
 import io
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -19,7 +20,7 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 APP_NAME = "PdfPaper"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 REPO_URL = "https://github.com/gcblack1984/PdfPaper"
 APP_AUTHOR = "Creato da Giovanni CICCARESE"
 APP_TITLE = f"{APP_NAME} - {APP_AUTHOR}"
@@ -51,6 +52,42 @@ def tessdata_dir():
                 f.endswith(".traineddata") for f in os.listdir(cand)):
             return cand
     return None
+
+
+def _settings_paths():
+    yield os.path.join(app_dir(), "pdfpaper_impostazioni.json")
+    base = os.environ.get("APPDATA")
+    if base:
+        yield os.path.join(base, "PdfPaper", "impostazioni.json")
+
+
+def load_settings():
+    import json
+    for path in _settings_paths():
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            continue
+    return {}
+
+
+def save_settings(data):
+    """Salva accanto al programma; se la cartella non è scrivibile, nel profilo dell'utente."""
+    import json
+    for path in _settings_paths():
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def rgb_hex(c):
+    return "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in c)
 
 
 def human_size(n):
@@ -167,6 +204,62 @@ class Splash(tk.Toplevel):
 # ----------------------------------------------------------------------------
 # Finestre di dialogo
 # ----------------------------------------------------------------------------
+def attach_edit_menu(widget):
+    """Menu del tasto destro (Taglia/Copia/Incolla/...) e Ctrl+A per caselle di testo e campi."""
+    is_text = isinstance(widget, tk.Text)
+
+    def has_sel():
+        try:
+            return bool(widget.tag_ranges("sel")) if is_text else widget.selection_present()
+        except tk.TclError:
+            return False
+
+    def has_clip():
+        try:
+            return bool(widget.clipboard_get())
+        except tk.TclError:
+            return False
+
+    def select_all(_e=None):
+        if is_text:
+            widget.tag_add("sel", "1.0", "end-1c")
+            widget.mark_set("insert", "end-1c")
+        else:
+            widget.select_range(0, "end")
+            widget.icursor("end")
+        return "break"
+
+    def popup(e):
+        widget.focus_set()
+        sel = "normal" if has_sel() else "disabled"
+        m = tk.Menu(widget, tearoff=False)
+        if is_text:
+            m.add_command(label="Annulla", accelerator="Ctrl+Z", command=lambda: widget.event_generate("<<Undo>>"))
+            m.add_command(label="Ripeti", accelerator="Ctrl+Y", command=lambda: widget.event_generate("<<Redo>>"))
+            m.add_separator()
+        m.add_command(label="✂  Taglia", accelerator="Ctrl+X", state=sel,
+                      command=lambda: widget.event_generate("<<Cut>>"))
+        m.add_command(label="❐  Copia", accelerator="Ctrl+C", state=sel,
+                      command=lambda: widget.event_generate("<<Copy>>"))
+        m.add_command(label="📋  Incolla", accelerator="Ctrl+V", state="normal" if has_clip() else "disabled",
+                      command=lambda: widget.event_generate("<<Paste>>"))
+        m.add_command(label="Elimina", accelerator="Canc", state=sel,
+                      command=lambda: widget.event_generate("<<Clear>>"))
+        m.add_separator()
+        m.add_command(label="Seleziona tutto", accelerator="Ctrl+A", command=select_all)
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+        return "break"
+
+    widget.bind("<Button-3>", popup, add="+")
+    widget.bind("<Control-a>", select_all, add="+")
+    widget.bind("<Control-A>", select_all, add="+")
+    if is_text:
+        widget.bind("<Control-y>", lambda e: (widget.event_generate("<<Redo>>"), "break")[1], add="+")
+
+
 class BaseDialog(tk.Toplevel):
     def __init__(self, master, title):
         super().__init__(master)
@@ -198,6 +291,289 @@ class BaseDialog(tk.Toplevel):
         raise NotImplementedError
 
 
+# ----------------------------------------------------------------------------
+# Caratteri: corrispondenza con i font del documento e con quelli di Windows
+# ----------------------------------------------------------------------------
+class FontChoice:
+    """Carattere da usare per scrivere: un font di Windows (file .ttf) o uno dei 14 font standard PDF."""
+
+    def __init__(self, label, fontname, fontfile=None):
+        self.label, self.fontname, self.fontfile = label, fontname, fontfile
+
+    def __repr__(self):
+        return f"FontChoice({self.label!r})"
+
+
+BASE14 = {  # famiglia -> (normale, grassetto, corsivo, grassetto corsivo)
+    "helvetica": ("helv", "hebo", "heit", "hebi"),
+    "times": ("tiro", "tibo", "tiit", "tibi"),
+    "courier": ("cour", "cobo", "coit", "cobi"),
+}
+STYLE_NAMES = ("", " grassetto", " corsivo", " grassetto corsivo")
+
+# famiglia -> (nome mostrato, file regular/bold/italic/bolditalic in C:\Windows\Fonts, famiglia standard simile)
+WIN_FONTS = {
+    "arial": ("Arial", ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"), "helvetica"),
+    "times": ("Times New Roman", ("times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf"), "times"),
+    "courier": ("Courier New", ("cour.ttf", "courbd.ttf", "couri.ttf", "courbi.ttf"), "courier"),
+    "calibri": ("Calibri", ("calibri.ttf", "calibrib.ttf", "calibrii.ttf", "calibriz.ttf"), "helvetica"),
+    "verdana": ("Verdana", ("verdana.ttf", "verdanab.ttf", "verdanai.ttf", "verdanaz.ttf"), "helvetica"),
+    "tahoma": ("Tahoma", ("tahoma.ttf", "tahomabd.ttf", None, None), "helvetica"),
+    "segoeui": ("Segoe UI", ("segoeui.ttf", "segoeuib.ttf", "segoeuii.ttf", "segoeuiz.ttf"), "helvetica"),
+    "trebuchet": ("Trebuchet MS", ("trebuc.ttf", "trebucbd.ttf", "trebucit.ttf", "trebucbi.ttf"), "helvetica"),
+    "centurygothic": ("Century Gothic", ("GOTHIC.TTF", "GOTHICB.TTF", "GOTHICI.TTF", "GOTHICBI.TTF"), "helvetica"),
+    "georgia": ("Georgia", ("georgia.ttf", "georgiab.ttf", "georgiai.ttf", "georgiaz.ttf"), "times"),
+    "garamond": ("Garamond", ("GARA.TTF", "GARABD.TTF", "GARAIT.TTF", None), "times"),
+    "bookantiqua": ("Book Antiqua", ("BKANT.TTF", "ANTQUAB.TTF", "ANTQUAI.TTF", "ANTQUABI.TTF"), "times"),
+    "comicsans": ("Comic Sans MS", ("comic.ttf", "comicbd.ttf", "comici.ttf", "comicz.ttf"), "helvetica"),
+}
+FONT_ALIASES = {  # nomi come compaiono nei PDF (senza spazi, minuscoli) -> famiglia
+    "arial": "arial", "arialmt": "arial", "helvetica": "arial", "helv": "arial", "arimo": "arial",
+    "liberationsans": "arial", "nimbussans": "arial", "arialnarrow": "arial",
+    "times": "times", "timesnewroman": "times", "timesnewromanps": "times", "timesroman": "times",
+    "tinos": "times", "liberationserif": "times", "nimbusroman": "times", "tiro": "times",
+    "courier": "courier", "couriernew": "courier", "couriernewps": "courier", "cousine": "courier",
+    "liberationmono": "courier", "nimbusmono": "courier", "cour": "courier",
+    "calibri": "calibri", "carlito": "calibri", "cambria": "times", "caladea": "times",
+    "verdana": "verdana", "tahoma": "tahoma", "segoeui": "segoeui", "trebuchetms": "trebuchet",
+    "centurygothic": "centurygothic", "georgia": "georgia", "garamond": "garamond",
+    "bookantiqua": "bookantiqua", "comicsansms": "comicsans",
+}
+
+
+def _font_dirs():
+    dirs = [os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        dirs.append(os.path.join(local, "Microsoft", "Windows", "Fonts"))
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+_FONT_FILE_CACHE = {}
+
+
+def find_font_file(name):
+    if not name:
+        return None
+    key = name.lower()
+    if key not in _FONT_FILE_CACHE:
+        found = None
+        for d in _font_dirs():
+            try:
+                for f in os.listdir(d):
+                    if f.lower() == key:
+                        found = os.path.join(d, f)
+                        break
+            except OSError:
+                pass
+            if found:
+                break
+        _FONT_FILE_CACHE[key] = found
+    return _FONT_FILE_CACHE[key]
+
+
+def make_font(family, bold=False, italic=False):
+    """FontChoice per una famiglia (chiave di WIN_FONTS): file di Windows se c'è, altrimenti font standard."""
+    idx = (1 if bold else 0) + (2 if italic else 0)
+    disp, files, base = WIN_FONTS.get(family, ("Helvetica", (None,) * 4, "helvetica"))
+    for i in (idx, idx & 1, 0) if files[idx] is None else (idx,):
+        path = find_font_file(files[i])
+        if path:
+            return FontChoice(disp + STYLE_NAMES[i], f"pp{family}{i}", path)
+    return FontChoice({"helvetica": "Helvetica", "times": "Times", "courier": "Courier"}[base] + STYLE_NAMES[idx],
+                      BASE14[base][idx])
+
+
+def font_from_pdf(fontname, flags=0):
+    """Dal nome di un font nel PDF (es. 'ABCDEF+TimesNewRomanPS-BoldMT') al carattere più simile."""
+    raw = fontname.split("+")[-1]
+    low = raw.lower()
+    bold = bool(flags & 16) or any(k in low for k in ("bold", "black", "heavy", "semibold", "demi"))
+    italic = bool(flags & 2) or "italic" in low or "oblique" in low
+    fam = re.split(r"[-,]", raw, maxsplit=1)[0].lower().replace(" ", "")
+    for suf in ("psmt", "mt", "ps", "regular", "bold", "italic"):
+        if fam.endswith(suf) and fam[:-len(suf)] in FONT_ALIASES:
+            fam = fam[:-len(suf)]
+            break
+    family = FONT_ALIASES.get(fam)
+    exact = family is not None
+    if not family:
+        family = "courier" if flags & 8 else "times" if flags & 4 else "arial"
+    return make_font(family, bold, italic), exact, raw, family
+
+
+def available_fonts():
+    """Elenco dei caratteri da proporre: quelli di Windows presenti e i 14 standard."""
+    out = []
+    for fam in WIN_FONTS:
+        for i in range(4):
+            f = make_font(fam, bool(i & 1), bool(i & 2))
+            if f.fontfile and f.label not in [o.label for o in out]:
+                out.append(f)
+    for base, disp in (("helvetica", "Helvetica"), ("times", "Times"), ("courier", "Courier")):
+        for i in range(4):
+            out.append(FontChoice(disp + STYLE_NAMES[i], BASE14[base][i]))
+    return out
+
+
+# ----------------------------------------------------------------------------
+# Stima dello stile da un'immagine (pagine scansionate)
+# ----------------------------------------------------------------------------
+SCAN_DPI = 300
+_DESC = set("gjpqy,;()[]{}|@$Q")
+_LASC = set("bdfhklt'àèéìòù")
+
+
+def _otsu(hist):
+    total = sum(hist)
+    sum_all = sum(i * h for i, h in enumerate(hist))
+    wb = sb = 0
+    best_t, best_v = 128, -1
+    for t in range(256):
+        wb += hist[t]
+        if wb == 0:
+            continue
+        wf = total - wb
+        if wf == 0:
+            break
+        sb += t * hist[t]
+        mb, mf = sb / wb, (sum_all - sb) / wf
+        v = wb * wf * (mb - mf) ** 2
+        if v > best_v:
+            best_v, best_t = v, t
+    return best_t
+
+
+def _tmean(v):
+    """Media tra il 20° e il 70° percentile: robusta e meno "a scalini" della mediana."""
+    if not v:
+        return 0
+    v = sorted(v)
+    a = int(len(v) * 0.2)
+    b = max(int(len(v) * 0.7), a + 1)
+    part = v[a:b]
+    return sum(part) / len(part)
+
+
+def _median(v):
+    v = sorted(v)
+    return v[len(v) // 2] if v else None
+
+
+def split_lines(img):
+    """Divide un'immagine con più righe di testo in strisce, una per riga."""
+    gray = img.convert("L")
+    thr = _otsu(gray.histogram())
+    ink = gray.point(lambda p: 255 if p < thr else 0)
+    w, h = ink.size
+    data = ink.tobytes()
+    rows = [sum(1 for b in data[y * w:(y + 1) * w] if b) for y in range(h)]
+    min_ink = max(1, w // 200)
+    bands, start = [], None
+    for y, n in enumerate(rows + [0]):
+        if n >= min_ink and start is None:
+            start = y
+        elif n < min_ink and start is not None:
+            if y - start >= 4:
+                bands.append((start, y))
+            start = None
+    return [img.crop((0, max(0, a - 2), w, min(h, b + 2))) for a, b in bands]
+
+
+def analyze_line(img, dpi=SCAN_DPI, text=None):
+    """Analizza l'immagine di UNA riga di testo: dimensione, spessore aste, contrasto, colore."""
+    gray = img.convert("L")
+    hist = gray.histogram()
+    thr = _otsu(hist)
+    if thr < 40 or thr > 245:
+        thr = 160
+    # "morbidezza": quanti pixel grigi di bordo ci sono rispetto all'inchiostro pieno (scansione sfocata)
+    soft = sum(hist[max(1, thr - 60):min(255, thr + 50)]) / max(sum(hist[:max(1, thr - 60)]), 1)
+    ink = gray.point(lambda p: 255 if p < thr else 0)
+    bbox = ink.getbbox()
+    if not bbox:
+        return None
+    ink = ink.crop(bbox)
+    w, h = ink.size
+    if h < 4 or w < 4:
+        return None
+    data = ink.tobytes()
+    if text:
+        t = text.replace(" ", "")
+        desc = any(c in _DESC for c in t)
+        lasc = any(c in _LASC for c in t)
+        caps = any(c.isupper() or c.isdigit() for c in t)
+    else:
+        desc = lasc = caps = True
+    if desc:
+        factor = 0.92 if lasc else 0.88 if caps else 0.73
+    else:
+        factor = 0.73 if lasc else 0.67 if caps else 0.52
+    em = h / factor
+    hruns = []
+    for y in range(h):
+        run = 0
+        for b in data[y * w:(y + 1) * w]:
+            if b:
+                run += 1
+            elif run:
+                hruns.append(run)
+                run = 0
+        if run:
+            hruns.append(run)
+    vruns = []
+    lim = 0.3 * em
+    for x in range(w):
+        run = 0
+        for y in range(h):
+            if data[y * w + x]:
+                run += 1
+            elif run:
+                if run < lim:
+                    vruns.append(run)
+                run = 0
+        if run and run < lim:
+            vruns.append(run)
+    stem = _tmean(hruns)
+    horiz = _tmean(vruns)
+    px = list(img.crop(bbox).getdata())
+    gpx = list(gray.crop(bbox).getdata())
+    dark = sorted(range(len(gpx)), key=lambda i: gpx[i])[:max(1, len(gpx) // 12)]
+    r = sum(px[i][0] for i in dark) / len(dark)
+    g = sum(px[i][1] for i in dark) / len(dark)
+    b = sum(px[i][2] for i in dark) / len(dark)
+    color = (0, 0, 0) if max(r, g, b) < 90 else (round(r / 255, 3), round(g / 255, 3), round(b / 255, 3))
+    lower = bool(text) and sum(c.islower() for c in text) > len(text) * 0.4
+    return dict(size=em * 72 / dpi, stem_em=stem / em, contrast=(horiz / stem) if stem else 1.0, soft=soft,
+                width_ratio=(w / (len(text) * em)) if (text and lower) else None,
+                color=color, caps_only=bool(text) and caps and not lasc and not desc,
+                full=bool(text) and desc and (lasc or caps))
+
+
+def combine_styles(results, page_stem=None):
+    """Unisce le misure di più righe in uno stile: dimensione, grassetto, famiglia, colore."""
+    results = [r for r in results if r]
+    if not results:
+        return None
+    best = [r for r in results if r["full"]] or [r for r in results if not r["caps_only"]] or results
+    size = _median([r["size"] for r in best])
+    stem = _median([r["stem_em"] for r in results])
+    contrast = _median([r["contrast"] for r in results])
+    bold = stem > 1.2 * page_stem if page_stem else stem > 0.116
+    soft = _median([r["soft"] for r in results])
+    # rapporto tratti orizzontali/aste: basso nei caratteri con grazie. Nel testo normale la sfocatura
+    # ingrossa i tratti sottili, quindi con scansioni molto "morbide" la soglia sale.
+    serif = contrast < (0.64 if bold else max(0.72, 0.30 + 0.22 * soft))
+    widths = [r["width_ratio"] for r in results if r["width_ratio"]]
+    mono = bool(widths) and _median(widths) > 0.575
+    colors = [r["color"] for r in results]
+    color = max(set(colors), key=colors.count)
+    if not serif and any(r["caps_only"] for r in best):  # le maiuscole dei caratteri senza grazie sono più alte
+        size *= 0.67 / 0.72
+    return dict(size=round(size * 2) / 2, bold=bold, family="courier" if mono else "times" if serif else "arial",
+                color=color, stem=stem)
+
+
 FONTS = {"Helvetica": "helv", "Helvetica grassetto": "hebo",
          "Times": "tiro", "Times grassetto": "tibo",
          "Courier": "cour", "Courier grassetto": "cobo"}
@@ -205,41 +581,52 @@ ALIGNS = {"Sinistra": 0, "Centro": 1, "Destra": 2, "Giustificato": 3}
 
 
 class TextDialog(BaseDialog):
-    def __init__(self, master, title, text="", size=12.0, color=(0, 0, 0)):
+    """Testo da scrivere. 'style' = carattere, dimensione e colore proposti (rilevati dal documento)."""
+
+    def __init__(self, master, title, text="", style=None):
         super().__init__(master, title)
         self.resizable(True, True)
-        self.color = color
-        self.txt = tk.Text(self.body, width=60, height=10, wrap="word",
-                           font=("Segoe UI", 10), undo=True)
+        style = style or {}
+        self.color = style.get("color", (0, 0, 0))
+        self.txt = tk.Text(self.body, width=64, height=10, wrap="word", font=("Segoe UI", 10), undo=True)
         self.txt.insert("1.0", text)
+        self.txt.edit_reset()
+        attach_edit_menu(self.txt)
         self.txt.grid(row=0, column=0, columnspan=8, sticky="nsew")
         self.body.rowconfigure(0, weight=1)
         self.body.columnconfigure(7, weight=1)
 
+        self.fonts = available_fonts()
+        proposed = style.get("font")
+        if proposed and proposed.label not in [f.label for f in self.fonts]:
+            self.fonts.insert(0, proposed)
+        self.by_label = {f.label: f for f in self.fonts}
         ttk.Label(self.body, text="Carattere").grid(row=1, column=0, pady=(8, 0), sticky="w")
-        self.font = ttk.Combobox(self.body, values=list(FONTS), state="readonly", width=20)
-        self.font.set("Helvetica")
+        self.font = ttk.Combobox(self.body, values=[f.label for f in self.fonts], state="readonly", width=26)
+        self.font.set(proposed.label if proposed else self.fonts[0].label)
         self.font.grid(row=1, column=1, pady=(8, 0), padx=4)
         ttk.Label(self.body, text="Dim.").grid(row=1, column=2, pady=(8, 0))
         self.size = ttk.Spinbox(self.body, from_=4, to=144, increment=0.5, width=6)
-        self.size.set(round(size, 1))
+        self.size.set(f"{style.get('size', 11.0):g}")
         self.size.grid(row=1, column=3, pady=(8, 0), padx=4)
         ttk.Label(self.body, text="Allin.").grid(row=1, column=4, pady=(8, 0))
         self.align = ttk.Combobox(self.body, values=list(ALIGNS), state="readonly", width=11)
         self.align.set("Sinistra")
         self.align.grid(row=1, column=5, pady=(8, 0), padx=4)
-        self.col_btn = tk.Button(self.body, text="  Colore  ", command=self._pick,
-                                 relief="groove")
+        self.col_btn = tk.Button(self.body, text="  Colore  ", command=self._pick, relief="groove")
         self.col_btn.grid(row=1, column=6, pady=(8, 0), padx=4)
         self._paint_color()
+        note = style.get("note")
+        if note:
+            ttk.Label(self.body, text=note, foreground="#1565c0", wraplength=560, justify="left").grid(
+                row=2, column=0, columnspan=8, sticky="w", pady=(8, 0))
         self.buttons()
         self.txt.focus_set()
 
     def _paint_color(self):
         r, g, b = (int(c * 255) for c in self.color)
         hexc = f"#{r:02x}{g:02x}{b:02x}"
-        self.col_btn.config(bg=hexc, activebackground=hexc,
-                            fg="white" if (r + g + b) < 380 else "black")
+        self.col_btn.config(bg=hexc, activebackground=hexc, fg="white" if (r + g + b) < 380 else "black")
 
     def _pick(self):
         c = colorchooser.askcolor(parent=self)
@@ -254,7 +641,7 @@ class TextDialog(BaseDialog):
         except ValueError:
             messagebox.showwarning(APP_NAME, "Dimensione carattere non valida", parent=self)
             return
-        self.result = dict(text=text, size=size, font=FONTS[self.font.get()],
+        self.result = dict(text=text, size=size, font=self.by_label[self.font.get()],
                            align=ALIGNS[self.align.get()], color=self.color)
         self.destroy()
 
@@ -280,12 +667,14 @@ class PositionDialog(BaseDialog):
         self.num = ttk.Spinbox(self.body, from_=1, to=n_pages + 1, width=6)
         self.num.set(current + 2)
         self.num.grid(row=4, column=1, sticky="w", padx=4)
+        attach_edit_menu(self.num)
         self.extra = None
         if extra:  # (etichetta, valore predefinito) per un campo testo aggiuntivo
             ttk.Label(self.body, text=extra[0]).grid(row=5, column=0, sticky="w", pady=(10, 0))
             self.extra = ttk.Entry(self.body, width=18)
             self.extra.insert(0, extra[1])
             self.extra.grid(row=5, column=1, sticky="w", padx=4, pady=(10, 0))
+            attach_edit_menu(self.extra)
         self.buttons()
 
     def _ok(self):
@@ -335,7 +724,9 @@ class OcrDialog(BaseDialog):
                         variable=self.scope, value="all").grid(row=3, column=0, columnspan=2, sticky="w")
         self.range = tk.StringVar(value="")
         ttk.Label(self.body, text="Pagine (vuoto = tutte, es. 1-3,7):").grid(row=4, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(self.body, textvariable=self.range, width=14).grid(row=4, column=1, sticky="w", padx=6, pady=(8, 0))
+        rng = ttk.Entry(self.body, textvariable=self.range, width=14)
+        rng.grid(row=4, column=1, sticky="w", padx=6, pady=(8, 0))
+        attach_edit_menu(rng)
         ttk.Label(self.body, foreground="#777",
                   text="Le pagine elaborate diventano immagine + livello di testo invisibile.").grid(
             row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
@@ -528,11 +919,174 @@ def compress_worker(data, dpi, quality):
     return work
 
 
+def _proc_main(kind, in_path, out_path, args, q):
+    """Eseguito in un processo separato: l'OCR blocca l'interprete Python per tutto il tempo del
+    riconoscimento, quindi lo si tiene fuori dal processo della finestra, che resta reattiva."""
+    global fitz
+    try:
+        try:
+            import pymupdf as _f
+        except ImportError:
+            import fitz as _f
+        fitz = _f
+        with open(in_path, "rb") as fh:
+            data = fh.read()
+        work = ocr_worker(data, *args) if kind == "ocr" else compress_worker(data, *args)
+        res = work(lambda i, n, msg: q.put(("prog", i, n, msg)), lambda: False)
+        out, extra = res if kind == "ocr" else (res, None)
+        with open(out_path, "wb") as fh:
+            fh.write(out)
+        q.put(("done", extra))
+    except Exception as exc:
+        q.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
+class ProcessJob:
+    """Finestra con barra di avanzamento per un lavoro lungo eseguito in un processo separato."""
+
+    def __init__(self, master, title, kind, data, args, on_done, start_msg="Avvio..."):
+        import multiprocessing as mp
+        import shutil
+        import tempfile
+        self.master, self.on_done, self._shutil = master, on_done, shutil
+        self.tmp = tempfile.mkdtemp(prefix="pdfpaper_")
+        self.in_path = os.path.join(self.tmp, "in.pdf")
+        self.out_path = os.path.join(self.tmp, "out.pdf")
+        with open(self.in_path, "wb") as fh:
+            fh.write(data)
+        ctx = mp.get_context("spawn")
+        self.q = ctx.Queue()
+        self.p = ctx.Process(target=_proc_main, args=(kind, self.in_path, self.out_path, args, self.q),
+                             daemon=True)
+        self.finished = False
+        self.t0 = time.monotonic()
+
+        self.win = tk.Toplevel(master)
+        self.win.title(title)
+        self.win.transient(master)
+        self.win.resizable(False, False)
+        self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+        f = ttk.Frame(self.win, padding=16)
+        f.pack(fill="both", expand=True)
+        self.lbl = ttk.Label(f, text=start_msg, width=52)
+        self.lbl.pack(anchor="w")
+        self.bar = ttk.Progressbar(f, length=380, mode="indeterminate")
+        self.bar.pack(pady=(10, 4), fill="x")
+        self.sub = ttk.Label(f, text="", foreground="#666")
+        self.sub.pack(anchor="w")
+        ttk.Button(f, text="Annulla", command=self.cancel).pack(anchor="e", pady=(8, 0))
+        self.win.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.win.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.win.winfo_height()) // 3
+        self.win.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.bar.start(12)
+        self.win.grab_set()
+        self.win.update()
+        self.p.start()
+        self.win.after(100, self._poll)
+
+    def _cleanup(self):
+        self.finished = True
+        try:
+            self.win.grab_release()
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        self._shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def cancel(self):
+        if self.finished:
+            return
+        try:
+            if self.p.is_alive():
+                self.p.terminate()
+        except Exception:
+            pass
+        self._cleanup()
+
+    def _poll(self):
+        if self.finished:
+            return
+        try:
+            while True:
+                item = self.q.get_nowait()
+                if item[0] == "prog":
+                    _, i, n, msg = item
+                    if str(self.bar.cget("mode")) == "indeterminate":
+                        self.bar.stop()
+                        self.bar.config(mode="determinate", maximum=100)
+                    self.bar["value"] = 100 * i / max(n, 1)
+                    self.lbl.config(text=msg)
+                    el = int(time.monotonic() - self.t0)
+                    self.sub.config(text=f"Tempo trascorso: {el // 60}:{el % 60:02d}")
+                elif item[0] == "done":
+                    with open(self.out_path, "rb") as fh:
+                        data = fh.read()
+                    self._cleanup()
+                    self.on_done(data, item[1])
+                    return
+                else:
+                    self._cleanup()
+                    messagebox.showerror(APP_NAME, f"Operazione non riuscita:\n\n{item[1]}", parent=self.master)
+                    return
+        except queue.Empty:
+            pass
+        except (EOFError, OSError):
+            pass
+        if not self.p.is_alive() and self.q.empty():
+            code = self.p.exitcode
+            self._cleanup()
+            messagebox.showerror(APP_NAME, f"L'elaborazione si è interrotta inaspettatamente (codice {code}).",
+                                 parent=self.master)
+            return
+        self.win.after(150, self._poll)
+
+
 # ----------------------------------------------------------------------------
 # Finestra principale
 # ----------------------------------------------------------------------------
+class ToolTip:
+    """Suggerimento che compare tenendo il mouse fermo su un pulsante."""
+
+    def __init__(self, widget, text, delay=450):
+        self.w, self.text, self.delay = widget, text, delay
+        self.tip = None
+        self._after = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _e=None):
+        self._cancel()
+        self._after = self.w.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._after:
+            self.w.after_cancel(self._after)
+            self._after = None
+
+    def _show(self):
+        if self.tip or not self.w.winfo_exists():
+            return
+        x = self.w.winfo_rootx() + 8
+        y = self.w.winfo_rooty() + self.w.winfo_height() + 4
+        self.tip = tk.Toplevel(self.w)
+        self.tip.overrideredirect(True)
+        self.tip.attributes("-topmost", True)
+        self.tip.geometry(f"+{x}+{y}")
+        tk.Label(self.tip, text=self.text, bg="#ffffe1", fg="#222", relief="solid", bd=1,
+                 font=("Segoe UI", 9), padx=6, pady=2, justify="left").pack()
+
+    def _hide(self, _e=None):
+        self._cancel()
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
 MODES = {
     "view": ("Sfoglia", "Scorri e consulta il documento"),
+    "select": ("Seleziona testo", "Trascina sul testo per selezionarlo · tasto destro: copia, taglia, incolla e altro"),
     "text": ("Aggiungi testo", "Clicca o trascina un riquadro dove inserire il testo"),
     "edit": ("Modifica testo", "Trascina un riquadro attorno al testo da sostituire (includi tutta la riga)"),
     "image": ("Immagine", "Trascina il riquadro in cui inserire l'immagine"),
@@ -550,9 +1104,24 @@ class PdfPaperApp:
         self.dirty = False
         self.history = []
         self._img = None
+        self._pix = None
         self._drag = None
+        self._ox = self._oy = 10
+        self.words = []          # parole della pagina (coordinate non ruotate)
+        self._wrects = []        # rettangoli delle parole sul canvas
+        self.sel = None          # (indice iniziale, indice finale) della selezione
+        self._anchor = None
+        self._ctx_pt = None      # punto (pagina visibile) dell'ultimo clic destro / sinistro
+        self._hover = None       # posizione del mouse sul canvas
+        self._clip_meta = None   # (testo, stile) dell'ultima copia da PdfPaper
+        self._gen = 0            # aumenta a ogni modifica (per le cache)
+        self.doc_font = None     # carattere scelto dall'utente per il documento aperto
         self.mode = tk.StringVar(value="view")
-        self.redact_label = tk.BooleanVar(value=True)
+        self.settings = load_settings()
+        self.redact_label = tk.BooleanVar(value=self.settings.get("omissis_scritta", True))
+        self.redact_fill = tuple(self.settings.get("omissis_sfondo", (0, 0, 0)))
+        self.redact_fg = tuple(self.settings.get("omissis_colore_scritta", (1, 1, 1)))
+        self.redact_label.trace_add("write", lambda *a: self._save_redact_settings())
 
         root.title(APP_TITLE)
         root.geometry("1200x800")
@@ -580,10 +1149,18 @@ class PdfPaperApp:
         e = tk.Menu(m, tearoff=False)
         e.add_command(label="Annulla", accelerator="Ctrl+Z", command=self.undo)
         e.add_separator()
-        for key in ("text", "edit", "image", "redact"):
+        e.add_command(label="Copia", accelerator="Ctrl+C", command=self.copy_selection)
+        e.add_command(label="Taglia", accelerator="Ctrl+X", command=self.cut_selection)
+        e.add_command(label="Incolla", accelerator="Ctrl+V", command=self.paste)
+        e.add_command(label="Elimina testo selezionato", accelerator="Canc", command=self.delete_selection)
+        e.add_command(label="Seleziona tutto il testo della pagina", accelerator="Ctrl+A", command=self.select_all)
+        e.add_separator()
+        for key in ("select", "text", "edit", "image", "redact"):
             e.add_radiobutton(label=MODES[key][0], variable=self.mode, value=key)
         e.add_separator()
         e.add_checkbutton(label="Scritta \"OMISSIS\" sulle aree omissate", variable=self.redact_label)
+        e.add_command(label="Colore sfondo omissis...", command=self.choose_redact_fill)
+        e.add_command(label="Colore scritta omissis...", command=self.choose_redact_fg)
         m.add_cascade(label="Modifica", menu=e)
 
         p = tk.Menu(m, tearoff=False)
@@ -591,8 +1168,11 @@ class PdfPaperApp:
         p.add_command(label="Inserisci pagine da altro PDF...", command=self.insert_from_pdf)
         p.add_command(label="Inserisci immagine come nuova pagina...", command=self.insert_image_page)
         p.add_separator()
+        p.add_command(label="Ruota a destra di 90°", accelerator="Ctrl+R", command=lambda: self.rotate(90))
+        p.add_command(label="Ruota a sinistra di 90°", accelerator="Ctrl+Maiusc+R", command=lambda: self.rotate(-90))
+        p.add_command(label="Ruota di 180°", command=lambda: self.rotate(180))
+        p.add_separator()
         p.add_command(label="Elimina pagine...", accelerator="Canc", command=self.delete_pages)
-        p.add_command(label="Ruota pagina corrente di 90°", command=lambda: self.rotate(90))
         p.add_command(label="Sposta pagina corrente...", command=self.move_page)
         m.add_cascade(label="Pagine", menu=p)
 
@@ -606,6 +1186,7 @@ class PdfPaperApp:
         v.add_command(label="Zoom +", accelerator="Ctrl++", command=lambda: self.set_zoom(self.zoom * 1.2))
         v.add_command(label="Zoom -", accelerator="Ctrl+-", command=lambda: self.set_zoom(self.zoom / 1.2))
         v.add_command(label="Adatta larghezza", command=self.fit_width)
+        v.add_command(label="Pagina intera", command=self.fit_page)
         m.add_cascade(label="Visualizza", menu=v)
 
         h = tk.Menu(m, tearoff=False)
@@ -614,44 +1195,105 @@ class PdfPaperApp:
         self.root.config(menu=m)
 
     def _build_toolbar(self):
-        tb = ttk.Frame(self.root, padding=(6, 4))
-        tb.pack(side="top", fill="x")
+        """Barra dei pulsanti su tre righe, divisa in gruppi con titolo."""
+        bar = ttk.Frame(self.root, padding=(6, 2, 6, 2))
+        bar.pack(side="top", fill="x")
+        rows = []
+        for _ in range(3):
+            r = ttk.Frame(bar)
+            r.pack(side="top", fill="x", pady=1)
+            rows.append(r)
 
-        def btn(text, cmd):
-            b = ttk.Button(tb, text=text, command=cmd)
-            b.pack(side="left", padx=2)
+        def group(row, title):
+            g = ttk.LabelFrame(rows[row], text=f" {title} ", padding=(4, 0, 4, 3))
+            g.pack(side="left", padx=(0, 6), fill="y")
+            return g
+
+        def btn(g, text, cmd, tip):
+            b = ttk.Button(g, text=text, command=cmd)
+            b.pack(side="left", padx=1)
+            ToolTip(b, tip)
             return b
 
-        def sep():
-            ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=6)
+        def tool(g, key, text, tip):
+            b = ttk.Radiobutton(g, text=text, variable=self.mode, value=key, style="Toolbutton")
+            b.pack(side="left", padx=1, ipady=2)
+            ToolTip(b, tip)
 
-        btn("📂 Apri", self.open_file)
-        btn("💾 Salva", self.save)
-        btn("↶ Annulla", self.undo)
-        sep()
-        btn("◀", self.prev_page)
+        # --- riga 1: file, navigazione, zoom, rotazione
+        g = group(0, "File")
+        btn(g, "📂 Apri", self.open_file, "Apri un PDF (Ctrl+O)")
+        btn(g, "💾 Salva", self.save, "Salva il documento (Ctrl+S)")
+        btn(g, "Salva con nome", self.save_as, "Salva in un nuovo file (Ctrl+Maiusc+S)")
+        btn(g, "↶ Annulla", self.undo, "Annulla l'ultima operazione (Ctrl+Z)")
+
+        g = group(0, "Pagina")
+        btn(g, "◀", self.prev_page, "Pagina precedente (PagSu)")
         self.page_var = tk.StringVar(value="0")
-        ent = ttk.Entry(tb, textvariable=self.page_var, width=5, justify="center")
-        ent.pack(side="left")
+        ent = ttk.Entry(g, textvariable=self.page_var, width=5, justify="center")
+        ent.pack(side="left", padx=2)
         ent.bind("<Return>", lambda e: self._goto_entry())
-        self.page_total = ttk.Label(tb, text="/ 0")
-        self.page_total.pack(side="left", padx=(2, 4))
-        btn("▶", self.next_page)
-        sep()
-        btn("−", lambda: self.set_zoom(self.zoom / 1.2))
-        self.zoom_lbl = ttk.Label(tb, text="125%", width=5, anchor="center")
+        ToolTip(ent, "Scrivi il numero di pagina e premi Invio")
+        attach_edit_menu(ent)
+        self.page_total = ttk.Label(g, text="/ 0")
+        self.page_total.pack(side="left", padx=(0, 4))
+        btn(g, "▶", self.next_page, "Pagina successiva (PagGiù)")
+
+        g = group(0, "Zoom")
+        btn(g, "−", lambda: self.set_zoom(self.zoom / 1.2), "Riduci (Ctrl+-)")
+        self.zoom_lbl = ttk.Label(g, text="125%", width=5, anchor="center")
         self.zoom_lbl.pack(side="left")
-        btn("+", lambda: self.set_zoom(self.zoom * 1.2))
-        btn("↔", self.fit_width)
-        sep()
-        for key, icon in (("view", "✋"), ("text", "T+"), ("edit", "✎"),
-                          ("image", "🖼"), ("redact", "█")):
-            ttk.Radiobutton(tb, text=f"{icon} {MODES[key][0]}", variable=self.mode,
-                            value=key, style="Toolbutton").pack(side="left", padx=1)
-        ttk.Checkbutton(tb, text="scritta OMISSIS", variable=self.redact_label).pack(side="left", padx=4)
-        sep()
-        btn("🔍 OCR", self.run_ocr)
-        btn("🗜 Comprimi", self.compress)
+        btn(g, "+", lambda: self.set_zoom(self.zoom * 1.2), "Ingrandisci (Ctrl++)")
+        btn(g, "↔ Larghezza", self.fit_width, "Adatta alla larghezza della finestra")
+        btn(g, "▣ Intera", self.fit_page, "Mostra la pagina intera")
+
+        g = group(0, "Ruota pagina")
+        btn(g, "↺ 90°", lambda: self.rotate(-90), "Ruota la pagina corrente a sinistra di 90° (Ctrl+Maiusc+R)")
+        btn(g, "↻ 90°", lambda: self.rotate(90), "Ruota la pagina corrente a destra di 90° (Ctrl+R)")
+        btn(g, "⟲ 180°", lambda: self.rotate(180), "Capovolgi la pagina corrente (180°)")
+
+        # --- riga 2: strumenti sulla pagina, appunti
+        g = group(1, "Strumenti sulla pagina")
+        tool(g, "view", "✋ Sfoglia", "Scorri la pagina trascinando (Esc)")
+        tool(g, "select", "Aa Seleziona testo", "Trascina sul testo per selezionarlo")
+        tool(g, "text", "T+ Aggiungi testo", "Clicca o trascina un riquadro dove scrivere")
+        tool(g, "edit", "✎ Modifica testo", "Trascina un riquadro sul testo da sostituire")
+        tool(g, "image", "🖼 Immagine", "Trascina il riquadro in cui inserire un'immagine")
+        tool(g, "redact", "█ Omissis", "Trascina il riquadro da omissare (eliminazione definitiva)")
+
+        g = group(1, "Omissis")
+        cb = ttk.Checkbutton(g, text="scritta OMISSIS", variable=self.redact_label)
+        cb.pack(side="left", padx=(2, 6))
+        ToolTip(cb, "Scrive \"OMISSIS\" sulle aree omissate")
+        self.btn_fill = tk.Button(g, text="Sfondo", width=7, relief="groove", cursor="hand2",
+                                  command=self.choose_redact_fill)
+        self.btn_fill.pack(side="left", padx=1, pady=1)
+        ToolTip(self.btn_fill, "Colore di sfondo delle aree omissate")
+        self.btn_fg = tk.Button(g, text="Scritta", width=7, relief="groove", cursor="hand2",
+                                command=self.choose_redact_fg)
+        self.btn_fg.pack(side="left", padx=1, pady=1)
+        ToolTip(self.btn_fg, "Colore della scritta OMISSIS")
+        self._paint_redact_buttons()
+
+        g = group(1, "Appunti")
+        btn(g, "❐ Copia", self.copy_selection, "Copia il testo selezionato (Ctrl+C)")
+        btn(g, "✂ Taglia", self.cut_selection, "Copia il testo selezionato e lo elimina dalla pagina (Ctrl+X)")
+        btn(g, "📋 Incolla", self.paste, "Incolla testo o immagine dagli appunti (Ctrl+V)\n"
+                                         "nel punto dell'ultimo clic sulla pagina")
+
+        # --- riga 3: gestione pagine, documento
+        g = group(2, "Pagine")
+        btn(g, "+ Pagina vuota", self.insert_blank, "Inserisci una o più pagine bianche")
+        btn(g, "+ Da altro PDF", self.insert_from_pdf, "Inserisci pagine prese da un altro PDF")
+        btn(g, "+ Immagine come pagina", self.insert_image_page, "Inserisci un'immagine come nuova pagina")
+        btn(g, "✕ Elimina pagine", self.delete_pages, "Elimina una o più pagine")
+        btn(g, "⇅ Sposta pagina", self.move_page, "Sposta la pagina corrente in un'altra posizione")
+
+        g = group(2, "Documento")
+        btn(g, "🔍 OCR", self.run_ocr, "Rendi ricercabile un PDF scansionato")
+        btn(g, "🗜 Comprimi", self.compress, "Riduci il peso del file")
+        btn(g, "📄 Estrai testo", self.extract_text, "Mostra e salva tutto il testo del documento")
+        ttk.Separator(self.root, orient="horizontal").pack(side="top", fill="x")
 
     def _build_body(self):
         pw = ttk.PanedWindow(self.root, orient="horizontal")
@@ -682,6 +1324,8 @@ class PdfPaperApp:
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_motion)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
+        self.canvas.bind("<Button-3>", self._on_right_click)
+        self.canvas.bind("<Motion>", self._on_hover)
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
         self.canvas.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
@@ -701,8 +1345,15 @@ class PdfPaperApp:
         r.bind("<Control-minus>", lambda e: self.set_zoom(self.zoom / 1.2))
         r.bind("<Next>", lambda e: self.next_page())
         r.bind("<Prior>", lambda e: self.prev_page())
-        r.bind("<Escape>", lambda e: self.mode.set("view"))
-        self.pages_lb.bind("<Delete>", lambda e: self.delete_pages())
+        r.bind("<Escape>", lambda e: self._escape())
+        r.bind("<Control-r>", lambda e: self.rotate(90))
+        r.bind("<Control-R>", lambda e: self.rotate(-90))
+        r.bind("<Control-c>", lambda e: self._key(e, self.copy_selection))
+        r.bind("<Control-x>", lambda e: self._key(e, self.cut_selection))
+        r.bind("<Control-v>", lambda e: self._key(e, lambda: self.paste(use_hover=True)))
+        r.bind("<Control-a>", lambda e: self._key(e, self.select_all))
+        r.bind("<Delete>", lambda e: self._key(e, self.delete_selection))
+        self.pages_lb.bind("<Delete>", lambda e: (self.delete_pages(), "break")[1])
 
     def _show_welcome(self):
         self.canvas.delete("all")
@@ -756,6 +1407,8 @@ class PdfPaperApp:
             return
         self.doc, self.path = doc, path
         self.page_no, self.history, self.dirty = 0, [], False
+        self.doc_font, self._clip_meta = None, None
+        self._gen += 1
         self.refresh(rebuild_list=True)
         self.root.after(50, self.fit_width)
 
@@ -763,6 +1416,7 @@ class PdfPaperApp:
         if not self._confirm_discard():
             return
         self.doc, self.path, self.history, self.dirty = None, None, [], False
+        self.doc_font, self._clip_meta = None, None
         self.pages_lb.delete(0, "end")
         self.page_total.config(text="/ 0")
         self.page_var.set("0")
@@ -771,7 +1425,14 @@ class PdfPaperApp:
         self._update_status()
 
     def _pdf_bytes(self):
-        return self.doc.tobytes(garbage=3, deflate=True)
+        data = self.doc.tobytes(garbage=3, deflate=True)
+        try:  # su una copia: i caratteri di Windows inseriti vengono ridotti ai soli glifi usati
+            tmp = fitz.open("pdf", data)
+            tmp.subset_fonts()
+            data = tmp.tobytes(garbage=3, deflate=True)
+        except Exception:
+            pass
+        return data
 
     def save(self):
         if not self._need_doc():
@@ -817,6 +1478,7 @@ class PdfPaperApp:
 
     def _changed(self, rebuild_list=False):
         self.dirty = True
+        self._gen += 1
         self.refresh(rebuild_list=rebuild_list)
 
     def undo(self):
@@ -845,6 +1507,7 @@ class PdfPaperApp:
 
         page = self.doc[self.page_no]
         pix = page.get_pixmap(matrix=fitz.Matrix(self.zoom, self.zoom), alpha=False)
+        self._pix = pix
         self._img = tk.PhotoImage(data=pix.tobytes("ppm"))
         self.canvas.delete("all")
         cw = self.canvas.winfo_width()
@@ -854,6 +1517,7 @@ class PdfPaperApp:
                                      self._oy + pix.height + 3, fill="#333", outline="")
         self.canvas.create_image(self._ox, self._oy, image=self._img, anchor="nw")
         self.canvas.config(scrollregion=(0, 0, pix.width + 2 * self._ox, pix.height + 20))
+        self._load_words(page)
         self._update_status()
 
     def goto(self, n):
@@ -883,7 +1547,10 @@ class PdfPaperApp:
 
     def set_zoom(self, z):
         self.zoom = max(0.2, min(6.0, z))
+        keep = self.sel
         self.refresh()
+        if keep and keep[1] < len(self.words):  # lo zoom non cancella la selezione
+            self._set_selection(keep)
 
     def fit_width(self):
         if not self.doc:
@@ -891,36 +1558,72 @@ class PdfPaperApp:
         cw = max(self.canvas.winfo_width() - 40, 200)
         self.set_zoom(cw / self.doc[self.page_no].rect.width)
 
+    def fit_page(self):
+        if not self.doc:
+            return
+        r = self.doc[self.page_no].rect
+        cw = max(self.canvas.winfo_width() - 40, 200)
+        ch = max(self.canvas.winfo_height() - 30, 200)
+        self.set_zoom(min(cw / r.width, ch / r.height))
+
     def _on_wheel(self, e):
         if e.state & 0x0004:  # Ctrl: zoom
             self.set_zoom(self.zoom * (1.1 if e.delta > 0 else 1 / 1.1))
         else:
             self.canvas.yview_scroll(int(-e.delta / 40) or (-1 if e.delta > 0 else 1), "units")
 
-    # ---------------------------------------------------------------- selezione area
+    # ---------------------------------------------------------------- mouse
     def _on_press(self, e):
         if not self.doc:
             return
+        self.canvas.focus_set()
         x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
-        if self.mode.get() == "view":
+        self._ctx_pt = self._canvas_to_vis(x, y)
+        mode = self.mode.get()
+        if mode == "view":
             self.canvas.scan_mark(e.x, e.y)
             self._drag = ("pan",)
             return
-        color = {"redact": "#000000", "image": "#1565c0"}.get(self.mode.get(), "#d32f2f")
+        if mode == "select":
+            i = self._nearest_word(x, y, strict=True)
+            if i is None:
+                self._set_selection(None)
+                self._drag = ("sel-empty",)
+                return
+            self._anchor = i
+            self._set_selection((i, i))
+            self._drag = ("sel",)
+            return
+        color = {"redact": "#000000", "image": "#1565c0"}.get(mode, "#d32f2f")
         rid = self.canvas.create_rectangle(x, y, x, y, outline=color, width=2, dash=(4, 2))
         self._drag = ("rect", x, y, rid)
 
     def _on_motion(self, e):
         if not self._drag:
             return
-        if self._drag[0] == "pan":
+        kind = self._drag[0]
+        x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
+        if kind == "pan":
             self.canvas.scan_dragto(e.x, e.y, gain=1)
-            return
-        _, x0, y0, rid = self._drag
-        self.canvas.coords(rid, x0, y0, self.canvas.canvasx(e.x), self.canvas.canvasy(e.y))
+        elif kind == "sel-empty" and self.words:
+            # trascinamento iniziato fuori dal testo: si parte dalla parola più vicina
+            self._anchor = self._nearest_word(x, y)
+            self._drag = ("sel",)
+        elif kind == "sel" and self._anchor is not None:
+            i = self._nearest_word(x, y)
+            if i is not None:
+                self._set_selection((min(self._anchor, i), max(self._anchor, i)))
+        elif kind == "rect":
+            _, x0, y0, rid = self._drag
+            self.canvas.coords(rid, x0, y0, x, y)
 
     def _on_release(self, e):
         drag, self._drag = self._drag, None
+        if drag and drag[0] == "sel":
+            n = self._sel_count()
+            if n:
+                self.status.config(text=f"{n} parole selezionate · Ctrl+C copia · tasto destro per altre operazioni")
+            return
         if not drag or drag[0] != "rect":
             return
         _, x0, y0, rid = drag
@@ -941,6 +1644,20 @@ class PdfPaperApp:
         handler(rect)
         self.canvas.delete(rid)
 
+    def _on_hover(self, e):
+        self._hover = (self.canvas.canvasx(e.x), self.canvas.canvasy(e.y))
+
+    def _escape(self):
+        self._set_selection(None)
+        self.mode.set("view")
+
+    def _key(self, e, action):
+        """Scorciatoie degli appunti: nei campi di testo lascia il comportamento normale."""
+        if isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text, ttk.Spinbox, ttk.Combobox, tk.Listbox)):
+            return None
+        action()
+        return "break"
+
     def _canvas_to_pdf(self, x0, y0, x1, y1):
         page = self.doc[self.page_no]
         r = fitz.Rect((min(x0, x1) - self._ox) / self.zoom, (min(y0, y1) - self._oy) / self.zoom,
@@ -950,23 +1667,468 @@ class PdfPaperApp:
             return None
         return (r * page.derotation_matrix).normalize()  # coordinate non ruotate
 
+    def _canvas_to_vis(self, x, y):
+        """Punto del canvas -> punto sulla pagina come la si vede (None se fuori pagina)."""
+        if not self.doc:
+            return None
+        p = fitz.Point((x - self._ox) / self.zoom, (y - self._oy) / self.zoom)
+        return p if p in self.doc[self.page_no].rect else None
+
+    def _vis_rect_to_canvas(self, r):
+        return (r.x0 * self.zoom + self._ox, r.y0 * self.zoom + self._oy,
+                r.x1 * self.zoom + self._ox, r.y1 * self.zoom + self._oy)
+
+    # ---------------------------------------------------------------- selezione del testo
+    def _load_words(self, page):
+        """Parole della pagina; le coordinate di PyMuPDF sono riferite alla pagina NON ruotata."""
+        try:
+            self.words = page.get_text("words", sort=True)
+        except Exception:
+            self.words = []
+        rot = page.rotation_matrix
+        self._wrects = [self._vis_rect_to_canvas(fitz.Rect(w[:4]) * rot) for w in self.words]
+        self.sel = None
+        self._anchor = None
+
+    def _nearest_word(self, x, y, strict=False):
+        if not self._wrects:
+            return None
+        best, best_d = None, None
+        for i, (x0, y0, x1, y1) in enumerate(self._wrects):
+            dx = max(x0 - x, 0, x - x1)
+            dy = max(y0 - y, 0, y - y1)
+            if dx == 0 and dy == 0:
+                return i
+            d = dx + dy * 4  # preferisce le parole sulla stessa riga
+            if best_d is None or d < best_d:
+                best, best_d = i, d
+        if strict and best_d > 8:
+            return None
+        return best
+
+    def _sel_count(self):
+        return 0 if not self.sel else self.sel[1] - self.sel[0] + 1
+
+    def _set_selection(self, sel):
+        self.sel = sel
+        self.canvas.delete("sel")
+        if not sel:
+            return
+        for i in range(sel[0], sel[1] + 1):
+            x0, y0, x1, y1 = self._wrects[i]
+            if sys.platform == "darwin":  # macOS non supporta il retino: solo bordo
+                self.canvas.create_rectangle(x0 - 1, y0, x1 + 2, y1, outline="#3d8ef0", tags="sel")
+            else:
+                self.canvas.create_rectangle(x0 - 1, y0, x1 + 2, y1, fill="#3d8ef0", stipple="gray50",
+                                             outline="", tags="sel")
+
+    def _selected_words(self):
+        return [] if not self.sel else self.words[self.sel[0]:self.sel[1] + 1]
+
+    def _selected_text(self):
+        out, last = [], None
+        for w in self._selected_words():
+            key = (w[5], w[6])
+            if last is not None:
+                out.append("\n" if key != last else " ")
+            out.append(w[4])
+            last = key
+        return "".join(out)
+
+    def _selection_line_rects(self):
+        """Un rettangolo (coordinate non ruotate) per ogni riga selezionata."""
+        lines = {}
+        for w in self._selected_words():
+            key = (w[5], w[6])
+            r = fitz.Rect(w[:4])
+            lines[key] = lines[key] | r if key in lines else r
+        return list(lines.values())
+
+    def select_all(self):
+        if not self.doc or not self.words:
+            self.status.config(text="Nessun testo in questa pagina (se è una scansione, esegui l'OCR)")
+            return
+        if self.mode.get() != "select":
+            self.mode.set("select")
+        self._set_selection((0, len(self.words) - 1))
+        self.status.config(text=f"Selezionate tutte le {len(self.words)} parole della pagina")
+
+    def _need_selection(self):
+        if self._sel_count():
+            return True
+        self.status.config(text="Nessun testo selezionato: usa lo strumento 'Seleziona testo'")
+        return False
+
+    def copy_selection(self):
+        if not self.doc or not self._need_selection():
+            return False
+        text = self._selected_text()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        rects = self._selection_line_rects()
+        self._clip_meta = (text, self._detect_style(rects[0]))
+        self.status.config(text=f"Copiato negli appunti: {len(text)} caratteri")
+        return True
+
+    def cut_selection(self):
+        if self.copy_selection():
+            self.delete_selection(status="Testo tagliato: ora puoi incollarlo")
+
+    def delete_selection(self, status="Testo eliminato"):
+        if not self.doc or not self._need_selection():
+            return
+        page = self.doc[self.page_no]
+        rects = self._selection_line_rects()
+        fill = self._bg_color(rects[0])
+        self._checkpoint()
+        for r in rects:
+            # riquadro leggermente ridotto per non toccare le righe vicine
+            h = r.height
+            page.add_redact_annot(fitz.Rect(r.x0 + 0.3, r.y0 + h * 0.2, r.x1 - 0.3, r.y1 - h * 0.2), fill=fill)
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        self._changed()
+        self.status.config(text=status)
+
+    def edit_selection(self):
+        if not self.doc or not self._need_selection():
+            return
+        rects = self._selection_line_rects()
+        union = rects[0]
+        for r in rects[1:]:
+            union |= r
+        self._do_edit_text(union + (-1, -1, 1, 1))
+
+    def redact_selection(self):
+        if not self.doc or not self._need_selection():
+            return
+        page = self.doc[self.page_no]
+        self._checkpoint()
+        for r in self._selection_line_rects():
+            self._add_redaction(page, r + (-1, -1, 1, 1))
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
+        self._changed()
+
+    def _bg_color(self, rect):
+        """Colore dello sfondo appena fuori dall'angolo dell'area, letto dall'immagine mostrata."""
+        try:
+            page = self.doc[self.page_no]
+            vr = fitz.Rect(rect) * page.rotation_matrix
+            pix = self._pix
+            x = min(max(int(vr.x0 * self.zoom) - 2, 0), pix.width - 1)
+            y = min(max(int(vr.y0 * self.zoom) - 2, 0), pix.height - 1)
+            return tuple(v / 255 for v in pix.pixel(x, y)[:3])
+        except Exception:
+            return (1, 1, 1)
+
+    # ---------------------------------------------------------------- incolla
+    def _paste_point(self, use_hover=False):
+        """Dove incollare: con Ctrl+V il punto del mouse sulla pagina; poi l'ultimo clic; poi in alto a sinistra."""
+        if use_hover and self._hover:
+            p = self._canvas_to_vis(*self._hover)
+            if p is not None:
+                return p
+        if self._ctx_pt is not None:
+            return self._ctx_pt
+        return fitz.Point(36, 36)
+
+    def paste(self, at=None, use_hover=False):
+        if not self._need_doc():
+            return
+        pt = at if at is not None else self._paste_point(use_hover)
+        # 1) immagine negli appunti (screenshot, immagine copiata) o file immagine copiati
+        try:
+            from PIL import ImageGrab
+            data = ImageGrab.grabclipboard()
+        except Exception:
+            data = None
+        if data is not None:
+            if isinstance(data, list):
+                imgs = [f for f in data if os.path.splitext(f)[1].lower() in
+                        (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff")]
+                if imgs:
+                    self._insert_image_at(pt, filename=imgs[0])
+                    return
+            else:
+                buf = io.BytesIO()
+                data.convert("RGBA" if data.mode in ("RGBA", "LA", "P") else "RGB").save(buf, "PNG")
+                self._insert_image_at(pt, stream=buf.getvalue(), px_size=data.size)
+                return
+        # 2) testo
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            text = ""
+        if not text.strip():
+            self.status.config(text="Gli appunti sono vuoti")
+            return
+        page = self.doc[self.page_no]
+        if self._clip_meta and self._clip_meta[0] == text:
+            style = self._clip_meta[1]
+        else:
+            probe = (fitz.Rect(pt.x, pt.y, pt.x + 50, pt.y + 12) * page.derotation_matrix).normalize()
+            style = self._detect_style(probe, near=True)
+        size, color, font = style["size"], style["color"], style["font"]
+        W, H = page.rect.width, page.rect.height
+        x = min(pt.x, W - 80)
+        vis = fitz.Rect(x, pt.y, W - 18, H - 10)
+        if vis.height < size * 1.5:
+            vis.y0 = max(10, H - 10 - size * 3)
+        rect = (vis * page.derotation_matrix).normalize()
+        self._checkpoint()
+        used = self._insert_fit(page, rect, text, size, font, color, 0)
+        self._changed()
+        msg = "Testo incollato"
+        if used < size:
+            msg += f" (ridotto a {used} pt per entrare nella pagina)"
+        self.status.config(text=msg + " · per cambiarlo usa 'Modifica testo'")
+
+    def _insert_image_at(self, pt, filename=None, stream=None, px_size=None):
+        page = self.doc[self.page_no]
+        W, H = page.rect.width, page.rect.height
+        try:
+            if px_size is None:
+                pm = fitz.Pixmap(filename) if filename else fitz.Pixmap(stream)
+                px_size = (pm.width, pm.height)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Immagine non leggibile:\n\n{exc}")
+            return
+        w, h = px_size[0] * 0.75, px_size[1] * 0.75  # pixel a 96 dpi -> punti
+        x, y = pt.x, pt.y
+        if W - x - 18 < 60:
+            x = max(18, W - 18 - w)
+        k = min(1.0, (W - x - 18) / w, (H - y - 18) / h) if w and h else 1.0
+        if k <= 0.05:
+            y = max(18, H - 18 - h)
+            k = min(1.0, (W - x - 18) / w, (H - y - 18) / h)
+        vis = fitz.Rect(x, y, x + w * k, y + h * k)
+        rect = (vis * page.derotation_matrix).normalize()
+        self._checkpoint()
+        try:
+            page.insert_image(rect, filename=filename, stream=stream, keep_proportion=True,
+                              rotate=page.rotation)
+        except Exception as exc:
+            self.history.pop()
+            messagebox.showerror(APP_NAME, f"Impossibile inserire l'immagine:\n\n{exc}")
+            return
+        self._changed()
+        self.status.config(text="Immagine incollata · Ctrl+Z per annullare")
+
+    # ---------------------------------------------------------------- menu del tasto destro
+    def _on_right_click(self, e):
+        if not self.doc:
+            return
+        self.canvas.focus_set()
+        x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
+        pt = self._canvas_to_vis(x, y)
+        if pt is not None:
+            self._ctx_pt = pt
+        has_sel = bool(self._sel_count())
+        on = "normal" if has_sel else "disabled"
+        m = tk.Menu(self.root, tearoff=False)
+        m.add_command(label="❐  Copia", accelerator="Ctrl+C", state=on, command=self.copy_selection)
+        m.add_command(label="✂  Taglia", accelerator="Ctrl+X", state=on, command=self.cut_selection)
+        m.add_command(label="📋  Incolla qui", accelerator="Ctrl+V",
+                      command=lambda: self.paste(at=pt if pt is not None else self._ctx_pt))
+        m.add_command(label="Elimina testo selezionato", accelerator="Canc", state=on,
+                      command=self.delete_selection)
+        m.add_command(label="Seleziona tutto il testo della pagina", accelerator="Ctrl+A",
+                      command=self.select_all)
+        m.add_separator()
+        m.add_command(label="✎  Modifica testo selezionato...", state=on, command=self.edit_selection)
+        m.add_command(label="█  Omissis sul testo selezionato", state=on, command=self.redact_selection)
+        if pt is not None:
+            m.add_command(label="T+  Aggiungi testo qui...", command=lambda: self._add_text_at(pt))
+            m.add_command(label="🖼  Inserisci immagine qui...", command=lambda: self._add_image_at(pt))
+        m.add_separator()
+        m.add_command(label="↻  Ruota pagina a destra di 90°", accelerator="Ctrl+R",
+                      command=lambda: self.rotate(90))
+        m.add_command(label="↺  Ruota pagina a sinistra di 90°", accelerator="Ctrl+Maiusc+R",
+                      command=lambda: self.rotate(-90))
+        m.add_command(label="⟲  Ruota pagina di 180°", command=lambda: self.rotate(180))
+        m.add_separator()
+        m.add_command(label="+  Inserisci pagina vuota dopo questa", command=self._blank_after)
+        m.add_command(label="✕  Elimina questa pagina", command=self._delete_current)
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+
+    def _add_text_at(self, pt):
+        page = self.doc[self.page_no]
+        vis = fitz.Rect(pt.x, pt.y, min(pt.x + 260, page.rect.width - 10), min(pt.y + 60, page.rect.height - 5))
+        if vis.width > 10 and vis.height > 5:
+            self._do_add_text((vis * page.derotation_matrix).normalize())
+
+    def _add_image_at(self, pt):
+        path = filedialog.askopenfilename(title="Scegli immagine", filetypes=[
+            ("Immagini", "*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff"), ("Tutti", "*.*")])
+        if path:
+            self._insert_image_at(pt, filename=path)
+
+    def _blank_after(self):
+        ref = self.doc[self.page_no].rect
+        self._checkpoint()
+        self.doc.new_page(pno=self.page_no + 1, width=ref.width, height=ref.height)
+        self.page_no += 1
+        self._changed(rebuild_list=True)
+
+    def _delete_current(self):
+        if len(self.doc) <= 1:
+            messagebox.showwarning(APP_NAME, "Non puoi eliminare l'unica pagina del documento.")
+            return
+        if not messagebox.askyesno(APP_NAME, f"Eliminare la pagina {self.page_no + 1}?"):
+            return
+        self._checkpoint()
+        self.doc.delete_page(self.page_no)
+        self.page_no = min(self.page_no, len(self.doc) - 1)
+        self._changed(rebuild_list=True)
+
+    # ---------------------------------------------------------------- stile del testo (carattere, dimensione, colore)
+    def _word_lines(self, page, area):
+        """Righe di testo nell'area: [(rettangolo, testo)] in coordinate non ruotate."""
+        groups = {}
+        for w in page.get_text("words", clip=area):
+            key = (w[5], w[6])
+            r = fitz.Rect(w[:4])
+            if key in groups:
+                groups[key][0] |= r
+                groups[key][1].append(w[4])
+            else:
+                groups[key] = [r, [w[4]]]
+        return [(r, " ".join(t)) for r, t in groups.values()]
+
+    def _scan_crop(self, page, rect):
+        """Immagine (PIL, 300 dpi) di un'area della pagina come la si vede."""
+        from PIL import Image
+        if page.rotation == 0:
+            pix = page.get_pixmap(dpi=SCAN_DPI, clip=rect, alpha=False)
+            return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        key = (self._gen, self.page_no)
+        if getattr(self, "_scan_key", None) != key:
+            pix = page.get_pixmap(dpi=SCAN_DPI, alpha=False)
+            self._scan_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            self._scan_key = key
+        k = SCAN_DPI / 72
+        vr = fitz.Rect(rect) * page.rotation_matrix
+        return self._scan_img.crop((int(vr.x0 * k), int(vr.y0 * k), int(vr.x1 * k) + 1, int(vr.y1 * k) + 1))
+
+    def _analyze_lines(self, page, lines):
+        out = []
+        for r, text in lines[:10]:
+            try:
+                out.append(analyze_line(self._scan_crop(page, r + (-2, -2, 2, 2)), SCAN_DPI, text))
+            except Exception:
+                pass
+        return out
+
+    def _page_stem(self, page):
+        """Spessore tipico delle aste nel testo della pagina (riferimento per riconoscere il grassetto)."""
+        key = (self._gen, self.page_no)
+        if getattr(self, "_stem_key", None) != key:
+            lines = self._word_lines(page, page.rect * page.derotation_matrix)
+            lines = [ln for ln in lines if len(ln[1]) >= 12]
+            step = max(1, len(lines) // 12)
+            res = [r for r in self._analyze_lines(page, lines[::step][:12]) if r]
+            self._stem_val = _median([r["stem_em"] for r in res]) if len(res) >= 3 else None
+            self._stem_key = key
+        return self._stem_val
+
+    def _detect_style(self, rect, near=False):
+        """Stile da proporre per scrivere in 'rect'.
+        PDF digitali: carattere vero del documento. Scansioni: stima dall'immagine (dimensione, grassetto,
+        famiglia con/senza grazie, colore). Con near=True cerca le righe vicine (per il testo nuovo)."""
+        default = dict(font=self.doc_font or make_font("arial"), size=11.0, color=(0, 0, 0), note=None)
+        if not self.doc:
+            return default
+        page = self.doc[self.page_no]
+        prect = page.rect * page.derotation_matrix
+        area = fitz.Rect(prect.x0, rect.y0 - 70, prect.x1, rect.y1 + 70) & prect if near else fitz.Rect(rect)
+        try:
+            spans = []
+            for block in page.get_text("dict", clip=area).get("blocks", []):
+                for line in block.get("lines", []):
+                    for sp in line.get("spans", []):
+                        if sp["text"].strip():
+                            spans.append(sp)
+        except Exception:
+            spans = []
+        native = [sp for sp in spans if "glyphless" not in sp["font"].lower()]
+        center = fitz.Point((rect.x0 + rect.x1) / 2, rect.y0)
+        if native:
+            if near:
+                sp = min(native, key=lambda s: abs(fitz.Rect(s["bbox"]).y0 - center.y) +
+                         0.2 * abs(fitz.Rect(s["bbox"]).x0 - center.x))
+            else:  # lo stile con più caratteri nell'area
+                count = {}
+                for s in native:
+                    k = (s["font"], round(s["size"], 1), s["color"], s["flags"])
+                    count[k] = count.get(k, 0) + len(s["text"])
+                k = max(count, key=count.get)
+                sp = next(s for s in native if (s["font"], round(s["size"], 1), s["color"], s["flags"]) == k)
+            fc, exact, raw, family = font_from_pdf(sp["font"], sp["flags"])
+            c = sp["color"]
+            size = round(sp["size"] * 2) / 2
+            if self.doc_font:
+                fc = self.doc_font
+            if fc.fontfile or (exact and family in ("arial", "times", "courier")):
+                note = f"Stile del documento: {raw}, {size:g} pt."
+            else:
+                note = f"Stile del documento: {raw}, {size:g} pt (carattere non presente sul PC: proposto il più simile)."
+            return dict(font=fc, size=size, note=note,
+                        color=(((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255))
+        # scansione: righe dal livello OCR, oppure divise dall'immagine
+        lines = self._word_lines(page, area)
+        if near and lines:
+            lines.sort(key=lambda ln: abs(ln[0].y0 - center.y))
+            lines = lines[:4]
+        if lines:
+            results = self._analyze_lines(page, lines)
+        elif not near:
+            try:
+                results = [analyze_line(img) for img in split_lines(self._scan_crop(page, rect))[:10]]
+            except Exception:
+                results = []
+        else:
+            results = []
+        st = combine_styles(results, self._page_stem(page) if results else None)
+        if not st:
+            return default
+        names = {"times": "con grazie (tipo Times)", "arial": "senza grazie (tipo Arial)",
+                 "courier": "a spaziatura fissa (tipo Courier)"}
+        fc = self.doc_font or make_font(st["family"], st["bold"])
+        chosen = " · carattere scelto da te per questo documento" if self.doc_font else ""
+        note = (f"Stima dalla scansione: {st['size']:g} pt, {'grassetto' if st['bold'] else 'normale'}, "
+                f"carattere {names[st['family']]}{chosen}. Controlla e correggi se serve: la tua scelta del "
+                f"carattere verrà ricordata per questo documento.")
+        return dict(font=fc, size=st["size"], color=st["color"], note=note)
+
+    def _remember_font(self, style, res):
+        """Se l'utente cambia il carattere proposto, lo ricorda per il resto del documento."""
+        if res and style.get("font") is not None and res["font"].label != style["font"].label:
+            self.doc_font = res["font"]
+
     # ---------------------------------------------------------------- strumenti di modifica
     @staticmethod
     def _insert_fit(page, rect, text, size, font, color, align):
+        if isinstance(font, FontChoice):
+            fkw = dict(fontname=font.fontname, fontfile=font.fontfile) if font.fontfile else dict(fontname=font.fontname)
+        else:
+            fkw = dict(fontname=font)
         s = size
         while s >= 4:
-            rc = page.insert_textbox(rect, text, fontsize=s, fontname=font, color=color,
-                                     align=align, rotate=page.rotation)
+            rc = page.insert_textbox(rect, text, fontsize=s, color=color, align=align,
+                                     rotate=page.rotation, **fkw)
             if rc >= 0:
                 return s
             s -= 0.5
         big = fitz.Rect(rect.x0, rect.y0, rect.x1, page.mediabox.y1)  # allunga il riquadro
-        page.insert_textbox(big, text, fontsize=4, fontname=font, color=color, align=align,
-                            rotate=page.rotation)
+        page.insert_textbox(big, text, fontsize=4, color=color, align=align, rotate=page.rotation, **fkw)
         return 4
 
     def _do_add_text(self, rect):
-        res = TextDialog(self.root, "Aggiungi testo").show()
+        style = self._detect_style(rect, near=True)
+        res = TextDialog(self.root, "Aggiungi testo", style=style).show()
+        self._remember_font(style, res)
         if not res or not res["text"].strip():
             return
         self._checkpoint()
@@ -979,35 +2141,16 @@ class PdfPaperApp:
     def _do_edit_text(self, rect):
         page = self.doc[self.page_no]
         old = page.get_textbox(rect).strip()
-        size, color = 11.0, (0, 0, 0)
-        for block in page.get_text("dict", clip=rect).get("blocks", []):
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    if span["text"].strip():
-                        size = span["size"]
-                        c = span["color"]
-                        color = (((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255)
-                        break
-                else:
-                    continue
-                break
-            else:
-                continue
-            break
+        style = self._detect_style(rect)
         if not old:
             if not messagebox.askyesno(APP_NAME, "Nessun testo trovato nell'area (forse è una scansione: "
                                                  "esegui prima l'OCR).\nVuoi coprire l'area e scrivere testo nuovo?"):
                 return
-        res = TextDialog(self.root, "Modifica testo", text=old, size=size, color=color).show()
+        res = TextDialog(self.root, "Modifica testo", text=old, style=style).show()
+        self._remember_font(style, res)
         if res is None:
             return
-        # colore di sfondo campionato dall'angolo dell'area
-        try:
-            px = page.get_pixmap(clip=fitz.Rect(rect.x0, rect.y0, rect.x0 + 2, rect.y0 + 2),
-                                 alpha=False).pixel(0, 0)
-            fill = tuple(v / 255 for v in px[:3])
-        except Exception:
-            fill = (1, 1, 1)
+        fill = self._bg_color(rect)  # colore di sfondo appena fuori dall'area
         self._checkpoint()
         page.add_redact_annot(rect, fill=fill)
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
@@ -1023,22 +2166,60 @@ class PdfPaperApp:
         keep = messagebox.askyesno(APP_NAME, "Mantenere le proporzioni dell'immagine?")
         self._checkpoint()
         try:
-            self.doc[self.page_no].insert_image(rect, filename=path, keep_proportion=keep)
+            page = self.doc[self.page_no]
+            page.insert_image(rect, filename=path, keep_proportion=keep, rotate=page.rotation)
         except Exception as exc:
             self.history.pop()
             messagebox.showerror(APP_NAME, f"Impossibile inserire l'immagine:\n\n{exc}")
             return
         self._changed()
 
-    def _do_redact(self, rect):
-        page = self.doc[self.page_no]
-        self._checkpoint()
+    # ---------------------------------------------------------------- colori dell'omissis
+    def _paint_redact_buttons(self):
+        for btn, col in ((self.btn_fill, self.redact_fill), (self.btn_fg, self.redact_fg)):
+            fg = "white" if sum(col) < 1.5 else "black"
+            btn.config(bg=rgb_hex(col), activebackground=rgb_hex(col), fg=fg, activeforeground=fg)
+        # anteprima: la scritta del pulsante "Scritta" su sfondo del colore scelto per l'omissis
+        self.btn_fg.config(bg=rgb_hex(self.redact_fill), activebackground=rgb_hex(self.redact_fill),
+                           fg=rgb_hex(self.redact_fg), activeforeground=rgb_hex(self.redact_fg))
+
+    def _save_redact_settings(self):
+        self.settings.update(omissis_scritta=bool(self.redact_label.get()),
+                             omissis_sfondo=list(self.redact_fill), omissis_colore_scritta=list(self.redact_fg))
+        save_settings(self.settings)
+
+    def _pick_color(self, title, current):
+        c = colorchooser.askcolor(color=rgb_hex(current), title=title, parent=self.root)
+        return tuple(round(v / 255, 4) for v in c[0]) if c and c[0] else None
+
+    def choose_redact_fill(self):
+        c = self._pick_color("Colore di sfondo dell'omissis", self.redact_fill)
+        if c:
+            self.redact_fill = c
+            self._paint_redact_buttons()
+            self._save_redact_settings()
+
+    def choose_redact_fg(self):
+        c = self._pick_color("Colore della scritta OMISSIS", self.redact_fg)
+        if c:
+            self.redact_fg = c
+            self._paint_redact_buttons()
+            self._save_redact_settings()
+            if not self.redact_label.get():
+                self.redact_label.set(True)
+
+    def _add_redaction(self, page, rect):
         if self.redact_label.get():
             fs = max(4, min(12, rect.height * 0.6))
             page.add_redact_annot(rect, text="OMISSIS", fontname="hebo", fontsize=fs,
-                                  fill=(0, 0, 0), text_color=(1, 1, 1), align=fitz.TEXT_ALIGN_CENTER)
+                                  fill=self.redact_fill, text_color=self.redact_fg, align=fitz.TEXT_ALIGN_CENTER)
         else:
-            page.add_redact_annot(rect, fill=(0, 0, 0))
+            page.add_redact_annot(rect, fill=self.redact_fill)
+
+    def _do_redact(self, rect):
+        page = self.doc[self.page_no]
+        self._checkpoint()
+        self._add_redaction(page, rect)
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
         self._changed()
 
@@ -1144,6 +2325,8 @@ class PdfPaperApp:
         page = self.doc[self.page_no]
         page.set_rotation((page.rotation + deg) % 360)
         self._changed()
+        verso = {90: "a destra di 90°", -90: "a sinistra di 90°", 180: "di 180°"}.get(deg, f"di {deg}°")
+        self.status.config(text=f"Pagina {self.page_no + 1} ruotata {verso} · Ctrl+Z per annullare")
 
     def move_page(self):
         if not self._need_doc():
@@ -1181,8 +2364,7 @@ class PdfPaperApp:
                 return
         before = self.doc.tobytes()
 
-        def done(res):
-            data, count = res
+        def done(data, count):
             self.history.append(before)
             self.doc = fitz.open("pdf", data)
             self._changed(rebuild_list=True)
@@ -1190,7 +2372,8 @@ class PdfPaperApp:
                                 "Nessuna pagina da elaborare: il testo era già presente.\n"
                                 "Scegli 'Tutte le pagine' per forzare l'OCR.")
 
-        Job(self.root, "OCR in corso", self._safe(ocr_worker(before, opts, tdir)), done)
+        ProcessJob(self.root, "OCR in corso", "ocr", before, (opts, tdir), done,
+                   start_msg="Avvio del motore OCR...")
 
     def compress(self):
         if not self._need_doc():
@@ -1202,7 +2385,7 @@ class PdfPaperApp:
         on_disk = self.path and os.path.exists(self.path) and not self.dirty
         ref_size = os.path.getsize(self.path) if on_disk else len(before)
 
-        def done(data):
+        def done(data, _extra):
             if len(data) >= ref_size:
                 messagebox.showinfo(APP_NAME, f"Il file non si riduce ulteriormente "
                                               f"({human_size(ref_size)} → {human_size(len(data))}).\n"
@@ -1215,7 +2398,8 @@ class PdfPaperApp:
             messagebox.showinfo(APP_NAME, f"Compressione completata:\n{human_size(ref_size)} → "
                                           f"{human_size(len(data))}  (−{pct:.0f}%)\n\nRicorda di salvare.")
 
-        Job(self.root, "Compressione in corso", self._safe(compress_worker(before, *preset)), done)
+        ProcessJob(self.root, "Compressione in corso", "compress", before, tuple(preset), done,
+                   start_msg="Preparazione della compressione...")
 
     @staticmethod
     def _safe(work):
@@ -1233,8 +2417,9 @@ class PdfPaperApp:
         win = tk.Toplevel(self.root)
         win.title("Testo estratto")
         win.geometry("700x600")
-        t = tk.Text(win, wrap="word", font=("Consolas", 10))
+        t = tk.Text(win, wrap="word", font=("Consolas", 10), undo=True)
         t.insert("1.0", text)
+        attach_edit_menu(t)
         t.pack(fill="both", expand=True)
 
         def save_txt():
@@ -1335,4 +2520,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()  # necessario per i processi separati nell'exe
     main()

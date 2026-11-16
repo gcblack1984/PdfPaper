@@ -8,7 +8,7 @@
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
-    <pe-file path="PdfPaper.exe" product-name="PdfPaper" product-version="1.0.0.0">
+    <pe-file path="PdfPaper.exe" product-name="PdfPaper" product-version="1.1.0.0">
       <authenticode-sign />
     </pe-file>
   </zip-file>

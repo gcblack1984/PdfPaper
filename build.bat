@@ -47,6 +47,7 @@ python tools\collect_licenses.py dist\PdfPaper\licenze
 if exist LICENSE copy /Y LICENSE dist\PdfPaper\ >nul
 copy /Y THIRD_PARTY_NOTICES.md dist\PdfPaper\ >nul
 copy /Y LEGGIMI.txt dist\PdfPaper\ >nul
+copy /Y CHANGELOG.md dist\PdfPaper\ >nul
 copy /Y docs\Guida_PdfPaper.pdf dist\PdfPaper\ >nul
 
 echo.

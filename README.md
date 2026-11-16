@@ -13,11 +13,15 @@ Creato da Giovanni CICCARESE.
 ## Funzioni
 
 - **OCR**: rende ricercabili i PDF scansionati (italiano, inglese e altre lingue aggiungibili)
-- **Testo**: aggiunta di testo nuovo e modifica del testo esistente
+- **Testo**: aggiunta di testo nuovo e modifica del testo esistente, con carattere, dimensione e colore
+  uguali a quelli del documento (letti dal PDF o stimati dalla scansione)
 - **Immagini**: inserimento di immagini in un'area o come nuova pagina
 - **Pagine**: inserimento (vuote, da altro PDF, da immagine), eliminazione, rotazione, spostamento
 - **Compressione**: quattro livelli, da "solo ottimizzazione" a "forte"
 - **Omissis**: redazione reale, il contenuto sotto l'area viene eliminato dal file
+- **Selezione del testo** sulla pagina, con copia, taglia, incolla (anche immagini dagli appunti)
+- **Menu del tasto destro** con le operazioni più comuni
+- **Rotazione** delle pagine di 90° a destra, 90° a sinistra o 180° con un clic
 - **Estrazione testo** in .txt, annulla fino a 20 passaggi
 
 La guida completa con illustrazioni è in [docs/Guida_PdfPaper.pdf](docs/Guida_PdfPaper.pdf).

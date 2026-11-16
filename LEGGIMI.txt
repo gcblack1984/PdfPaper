@@ -1,4 +1,4 @@
-PdfPaper 1.0.0 - editor PDF portabile
+PdfPaper 1.1.0 - editor PDF portabile
 Creato da Giovanni CICCARESE - software libero, licenza GNU AGPL v3 (vedi LICENSE)
 ===================================
 
@@ -34,6 +34,8 @@ FUNZIONI
 
 SCORCIATOIE
   Ctrl+O apri · Ctrl+S salva · Ctrl+Z annulla · Ctrl+rotella zoom · PagSu/PagGiù pagine · Esc torna a Sfoglia
+  Ctrl+C copia · Ctrl+X taglia · Ctrl+V incolla · Ctrl+A seleziona tutto · Canc elimina testo selezionato
+  Ctrl+R ruota a destra · Ctrl+Maiusc+R ruota a sinistra · tasto destro sulla pagina: menu rapido
 
 AVVIO DA RIGA DI COMANDO
   PdfPaper.exe "C:\percorso\file.pdf"   (funziona anche "Apri con" da Esplora risorse)
