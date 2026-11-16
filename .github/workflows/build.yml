@@ -1,0 +1,101 @@
+# Compila PdfPaper su Windows e, per i tag v*, lo firma con SignPath e pubblica la release.
+# La firma parte solo dopo aver impostato in GitHub (Settings > Secrets and variables > Actions):
+#   variabile  SIGNPATH_ORGANIZATION_ID
+#   segreto    SIGNPATH_API_TOKEN
+# Senza queste due voci la release viene pubblicata NON firmata (serve per la prima release).
+name: Build PdfPaper
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa le librerie
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Crea l'eseguibile
+        run: >
+          pyinstaller --noconfirm --clean --onedir --windowed
+          --name PdfPaper
+          --icon assets/pdf_icon.ico
+          --add-data "assets;assets"
+          --contents-directory lib
+          --version-file version_info.txt
+          pdfpaper.py
+
+      - name: Dati lingua OCR
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/PdfPaper/tessdata | Out-Null
+          foreach ($l in 'ita', 'eng') {
+            Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$l.traineddata" `
+              -OutFile "dist/PdfPaper/tessdata/$l.traineddata"
+          }
+
+      - name: Licenze e documentazione
+        shell: pwsh
+        run: |
+          python tools/collect_licenses.py dist/PdfPaper/licenze
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, LEGGIMI.txt dist/PdfPaper/
+          Copy-Item docs/Guida_PdfPaper.pdf dist/PdfPaper/
+
+      - name: Carica l'artefatto non firmato
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: PdfPaper-unsigned
+          path: dist/PdfPaper/
+          if-no-files-found: error
+
+      - name: Firma con SignPath
+        if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: pdfpaper
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed/PdfPaper
+
+      - name: Prepara lo zip della release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $src = if (Test-Path signed/PdfPaper/PdfPaper.exe) { 'signed/PdfPaper' } else { 'dist/PdfPaper' }
+          Write-Host "Cartella usata: $src"
+          Compress-Archive -Path $src -DestinationPath "PdfPaper-$env:GITHUB_REF_NAME-win64.zip"
+
+      - name: Pubblica la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PdfPaper-*.zip
+          body: |
+            **PdfPaper ${{ github.ref_name }}**: editor PDF portabile per Windows (OCR, modifica testo,
+            immagini, gestione pagine, compressione, omissis). Nessuna installazione: estrai lo zip e
+            avvia `PdfPaper\PdfPaper.exe`. Per disinstallare elimina la cartella.
+
+            Portable PDF editor for Windows: OCR, text editing, images, page management,
+            compression and redaction.
+
+            [Code signing policy](https://github.com/${{ github.repository }}#code-signing-policy)
