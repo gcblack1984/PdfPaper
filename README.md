@@ -1,0 +1,69 @@
+# PdfPaper
+
+![PdfPaper](assets/pdf_icon_128.png)
+
+**PdfPaper** è un editor PDF portabile per Windows: si avvia senza installazione e funziona
+interamente sul computer, senza connessione a internet.
+
+*PdfPaper is a portable PDF editor for Windows (no installation, fully offline): OCR, text editing,
+image insertion, page management, compression and true redaction. User interface in Italian.*
+
+Creato da Giovanni CICCARESE.
+
+## Funzioni
+
+- **OCR**: rende ricercabili i PDF scansionati (italiano, inglese e altre lingue aggiungibili)
+- **Testo**: aggiunta di testo nuovo e modifica del testo esistente
+- **Immagini**: inserimento di immagini in un'area o come nuova pagina
+- **Pagine**: inserimento (vuote, da altro PDF, da immagine), eliminazione, rotazione, spostamento
+- **Compressione**: quattro livelli, da "solo ottimizzazione" a "forte"
+- **Omissis**: redazione reale, il contenuto sotto l'area viene eliminato dal file
+- **Estrazione testo** in .txt, annulla fino a 20 passaggi
+
+La guida completa con illustrazioni è in [docs/Guida_PdfPaper.pdf](docs/Guida_PdfPaper.pdf).
+
+## Download e uso
+
+1. Scarica lo zip dell'ultima versione dalla pagina [Releases](../../releases).
+2. Estrai lo zip e avvia `PdfPaper\PdfPaper.exe`.
+
+Requisiti: Windows 10 o 11 a 64 bit. Non serve installare Python né altro.
+
+**Disinstallazione**: PdfPaper non modifica il sistema e non scrive nel registro; per rimuoverlo
+basta eliminare la cartella `PdfPaper`.
+
+## Compilare dal codice sorgente
+
+Su Windows con Python 3.10 o successivo: doppio clic su `build.bat`.
+Il risultato è la cartella `dist\PdfPaper` (eseguibile, librerie in `lib\`, dati OCR in `tessdata\`).
+
+Le release ufficiali sono compilate da GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml))
+direttamente da questo repository.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/).
+
+Team roles:
+
+- Committers and reviewers: [Giovanni CICCARESE](https://github.com/gcblack1984)
+- Approvers: [Giovanni CICCARESE](https://github.com/gcblack1984)
+
+Only `PdfPaper.exe`, built from this repository by GitHub Actions, is signed. Every release
+signing request is approved manually.
+
+## Privacy policy
+
+This program will not transfer any information to other networked systems unless specifically
+requested by the user or the person installing or operating it.
+
+PdfPaper non trasmette alcun dato in rete: i documenti vengono elaborati solo sul computer
+dell'utente. I componenti di terze parti inclusi (vedi sotto) non effettuano connessioni di rete.
+
+## Licenza
+
+PdfPaper è software libero distribuito con licenza
+[GNU Affero General Public License v3.0](LICENSE).
+
+Componenti di terze parti e relative licenze: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

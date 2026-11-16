@@ -1,0 +1,45 @@
+PdfPaper 1.0.0 - editor PDF portabile
+Creato da Giovanni CICCARESE - software libero, licenza GNU AGPL v3 (vedi LICENSE)
+===================================
+
+CREARE LA VERSIONE PORTABILE (una volta sola, su un PC Windows con Python 3.10+ e internet)
+  1. Doppio clic su build.bat
+  2. Al termine trovi la cartella  dist\PdfPaper :
+        PdfPaper.exe      <- il programma
+        lib\             <- tutte le librerie (Python, PyMuPDF, Pillow, Tk)
+        tessdata\        <- lingue OCR (ita, eng)
+  3. Copia l'intera cartella dove vuoi (chiavetta, rete, altro PC): si avvia senza installazione.
+
+  Se il PC non ha internet: prima di build.bat crea una cartella "tessdata" accanto a build.bat
+  con dentro ita.traineddata ed eng.traineddata (github.com/tesseract-ocr/tessdata_fast).
+  Per altre lingue basta copiare altri file .traineddata in dist\PdfPaper\tessdata.
+
+FUNZIONI
+  File        Apri, Salva, Salva con nome (il file originale non viene toccato finché non salvi)
+  Modifica    Annulla (Ctrl+Z, fino a 20 passi)
+  Strumenti sulla barra (trascina un riquadro sulla pagina):
+    T+ Aggiungi testo   clic o riquadro -> testo, carattere, dimensione, colore, allineamento
+    ✎  Modifica testo   riquadro attorno al testo esistente -> lo modifichi e viene sostituito
+                        (includi tutta la riga; sulle scansioni esegui prima l'OCR)
+    🖼  Immagine         riquadro -> scegli PNG/JPG/... da inserire
+    █  Omissis          riquadro -> area annerita, con o senza scritta "OMISSIS".
+                        È una redazione reale: testo e immagini sotto l'area vengono ELIMINATI
+                        dal file, non solo coperti.
+  Pagine      Inserisci pagina vuota / pagine da un altro PDF / immagine come pagina
+              (prima o dopo la corrente, all'inizio, alla fine o in posizione N),
+              Elimina pagine (es. 2-5,8), Ruota, Sposta
+  Strumenti   OCR: crea il livello di testo ricercabile (italiano/inglese, 150-400 dpi)
+              Comprimi: leggera / media / forte / solo ottimizzazione senza perdita
+              Estrai testo in .txt
+
+SCORCIATOIE
+  Ctrl+O apri · Ctrl+S salva · Ctrl+Z annulla · Ctrl+rotella zoom · PagSu/PagGiù pagine · Esc torna a Sfoglia
+
+AVVIO DA RIGA DI COMANDO
+  PdfPaper.exe "C:\percorso\file.pdf"   (funziona anche "Apri con" da Esplora risorse)
+
+DISINSTALLAZIONE
+  Elimina la cartella PdfPaper: il programma non modifica il sistema né il registro.
+
+PRIVACY
+  Il programma non trasmette alcun dato in rete.
