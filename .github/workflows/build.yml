@@ -23,9 +23,9 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -98,14 +98,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Creazione MSIX non riuscita" }
 
       - name: Carica la versione portabile
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PdfPaper-portabile
           path: dist/PdfPaper/
           if-no-files-found: error
 
       - name: Carica il pacchetto MSIX
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PdfPaper-msix
           path: PdfPaper-*.msix
