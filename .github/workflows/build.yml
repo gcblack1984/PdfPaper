@@ -1,8 +1,12 @@
-# Compila PdfPaper su Windows e, per i tag v*, lo firma con SignPath e pubblica la release.
-# La firma parte solo dopo aver impostato in GitHub (Settings > Secrets and variables > Actions):
-#   variabile  SIGNPATH_ORGANIZATION_ID
-#   segreto    SIGNPATH_API_TOKEN
-# Senza queste due voci la release viene pubblicata NON firmata (serve per la prima release).
+# Compila PdfPaper su Windows: versione portabile (zip) e pacchetto MSIX per Microsoft Store.
+# Per i tag v* pubblica la release su GitHub.
+#
+# Il pacchetto MSIX accettato dallo Store richiede l'identità assegnata da Partner Center.
+# Inseriscila in GitHub: Settings > Secrets and variables > Actions > Variables
+#   MSIX_IDENTITY_NAME          (Package/Identity/Name)
+#   MSIX_PUBLISHER              (Package/Identity/Publisher, es. CN=1A2B3C4D-....)
+#   MSIX_PUBLISHER_DISPLAY_NAME (Package/Properties/PublisherDisplayName)
+# Senza queste variabili viene creato un MSIX "di prova", non caricabile sullo Store.
 name: Build PdfPaper
 
 on:
@@ -24,6 +28,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Leggi la versione
+        id: ver
+        shell: pwsh
+        run: |
+          $m = Select-String -Path version_info.txt -Pattern "ProductVersion', '([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+'"
+          $v = $m.Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Versione: $v"
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$v") {
+            throw "Il tag ${{ github.ref_name }} non corrisponde alla versione v$v di version_info.txt"
+          }
 
       - name: Installa le librerie
         run: |
@@ -53,37 +69,52 @@ jobs:
         shell: pwsh
         run: |
           python tools/collect_licenses.py dist/PdfPaper/licenze
-          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, LEGGIMI.txt dist/PdfPaper/
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, LEGGIMI.txt, CHANGELOG.md dist/PdfPaper/
           Copy-Item docs/Guida_PdfPaper.pdf dist/PdfPaper/
 
-      - name: Carica l'artefatto non firmato
-        id: upload
+      - name: Pacchetto MSIX per Microsoft Store
+        shell: pwsh
+        env:
+          ID_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          ID_PUB: ${{ vars.MSIX_PUBLISHER }}
+          ID_DISP: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}.0"
+          $name = if ($env:ID_NAME) { $env:ID_NAME } else { "PdfPaper.Prova" }
+          $pub  = if ($env:ID_PUB)  { $env:ID_PUB }  else { "CN=PdfPaperProva" }
+          $disp = if ($env:ID_DISP) { $env:ID_DISP } else { "Giovanni Ciccarese" }
+          if (-not $env:ID_NAME) { Write-Warning "Identità Store non impostata: MSIX di prova" }
+          New-Item -ItemType Directory -Force msixroot | Out-Null
+          Copy-Item dist/PdfPaper/* msixroot -Recurse
+          Copy-Item msix/Assets msixroot/Assets -Recurse
+          $xml = Get-Content msix/AppxManifest.xml -Raw
+          $xml = $xml.Replace('__PUBLISHER_DISPLAY__', $disp).Replace('__IDENTITY_NAME__', $name)
+          $xml = $xml.Replace('__PUBLISHER__', $pub).Replace('__VERSION__', $ver)
+          Set-Content msixroot/AppxManifest.xml $xml -Encoding utf8
+          $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makeappx.exe |
+                  Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $tool) { throw "makeappx.exe non trovato" }
+          & $tool.FullName pack /d msixroot /p "PdfPaper-$ver-x64.msix" /o
+          if ($LASTEXITCODE -ne 0) { throw "Creazione MSIX non riuscita" }
+
+      - name: Carica la versione portabile
         uses: actions/upload-artifact@v4
         with:
-          name: PdfPaper-unsigned
+          name: PdfPaper-portabile
           path: dist/PdfPaper/
           if-no-files-found: error
 
-      - name: Firma con SignPath
-        if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: signpath/github-action-submit-signing-request@v1
+      - name: Carica il pacchetto MSIX
+        uses: actions/upload-artifact@v4
         with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: pdfpaper
-          signing-policy-slug: release-signing
-          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: signed/PdfPaper
+          name: PdfPaper-msix
+          path: PdfPaper-*.msix
+          if-no-files-found: error
 
       - name: Prepara lo zip della release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
-        run: |
-          $src = if (Test-Path signed/PdfPaper/PdfPaper.exe) { 'signed/PdfPaper' } else { 'dist/PdfPaper' }
-          Write-Host "Cartella usata: $src"
-          Compress-Archive -Path $src -DestinationPath "PdfPaper-$env:GITHUB_REF_NAME-win64.zip"
+        run: Compress-Archive -Path dist/PdfPaper -DestinationPath "PdfPaper-$env:GITHUB_REF_NAME-win64.zip"
 
       - name: Pubblica la release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -91,11 +122,13 @@ jobs:
         with:
           files: PdfPaper-*.zip
           body: |
-            **PdfPaper ${{ github.ref_name }}**: editor PDF portabile per Windows (OCR, modifica testo,
-            immagini, gestione pagine, compressione, omissis). Nessuna installazione: estrai lo zip e
-            avvia `PdfPaper\PdfPaper.exe`. Per disinstallare elimina la cartella.
+            **PdfPaper ${{ github.ref_name }}**: editor PDF per Windows (OCR, modifica testo, immagini,
+            gestione pagine, compressione, omissis).
+
+            **Versione portabile**: estrai lo zip e avvia `PdfPaper\PdfPaper.exe`. Per disinstallare
+            elimina la cartella. Non è firmata digitalmente: al primo avvio Windows può chiedere conferma.
+
+            Novità: vedi [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
 
             Portable PDF editor for Windows: OCR, text editing, images, page management,
             compression and redaction.
-
-            [Code signing policy](https://github.com/${{ github.repository }}#code-signing-policy)
