@@ -2,6 +2,10 @@ PdfPaper 1.1.0 - editor PDF portabile
 Creato da Giovanni CICCARESE - software libero, licenza GNU AGPL v3 (vedi LICENSE)
 ===================================
 
+INSTALLAZIONE DA MICROSOFT STORE
+  Cerca "PdfPaper" nel Microsoft Store: installazione firmata da Microsoft e aggiornamenti automatici.
+  Le istruzioni per pubblicarlo sono in PUBBLICAZIONE_STORE.md.
+
 CREARE LA VERSIONE PORTABILE (una volta sola, su un PC Windows con Python 3.10+ e internet)
   1. Doppio clic su build.bat
   2. Al termine trovi la cartella  dist\PdfPaper :

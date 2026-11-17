@@ -28,13 +28,21 @@ La guida completa con illustrazioni è in [docs/Guida_PdfPaper.pdf](docs/Guida_P
 
 ## Download e uso
 
-1. Scarica lo zip dell'ultima versione dalla pagina [Releases](../../releases).
+**Microsoft Store** (consigliato): installazione firmata da Microsoft e aggiornamenti automatici.
+*(Il link verrà aggiunto dopo la pubblicazione.)*
+
+**Versione portabile**, senza installazione:
+
+1. Scarica `PdfPaper-vX.Y.Z-win64.zip` dalla pagina [Releases](../../releases).
 2. Estrai lo zip e avvia `PdfPaper\PdfPaper.exe`.
+
+La versione portabile non è firmata digitalmente: al primo avvio Windows può mostrare un avviso
+("Ulteriori informazioni" > "Esegui comunque").
 
 Requisiti: Windows 10 o 11 a 64 bit. Non serve installare Python né altro.
 
-**Disinstallazione**: PdfPaper non modifica il sistema e non scrive nel registro; per rimuoverlo
-basta eliminare la cartella `PdfPaper`.
+**Disinstallazione**: la versione dello Store si rimuove da Impostazioni > App. La versione portabile
+non modifica il sistema e non scrive nel registro: basta eliminare la cartella `PdfPaper`.
 
 ## Compilare dal codice sorgente
 
@@ -43,19 +51,6 @@ Il risultato è la cartella `dist\PdfPaper` (eseguibile, librerie in `lib\`, dat
 
 Le release ufficiali sono compilate da GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml))
 direttamente da questo repository.
-
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://about.signpath.io/),
-certificate by [SignPath Foundation](https://signpath.org/).
-
-Team roles:
-
-- Committers and reviewers: [Giovanni CICCARESE](https://github.com/gcblack1984)
-- Approvers: [Giovanni CICCARESE](https://github.com/gcblack1984)
-
-Only `PdfPaper.exe`, built from this repository by GitHub Actions, is signed. Every release
-signing request is approved manually.
 
 ## Privacy policy
 

@@ -1,5 +1,5 @@
 # Dati di versione incorporati in PdfPaper.exe (Proprietà > Dettagli).
-# SignPath controlla che ProductName sia "PdfPaper": non cambiarlo.
+# Il pacchetto per Microsoft Store (MSIX) prende la versione da qui: non cambiare ProductName.
 # Ad ogni nuova versione aggiorna i quattro numeri di versione qui sotto.
 VSVersionInfo(
   ffi=FixedFileInfo(
