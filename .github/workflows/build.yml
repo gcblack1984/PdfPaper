@@ -20,7 +20,67 @@ permissions:
   contents: write
 
 jobs:
+  # Verifiche automatiche: test del programma, analisi di sicurezza del codice (Bandit) e
+  # vulnerabilità note delle librerie (pip-audit). Il rapporto completo è nell'artefatto
+  # PdfPaper-verifiche. Se una verifica non è superata, l'eseguibile non viene creato.
+  verifiche:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Installa le librerie e gli strumenti di verifica
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          New-Item -ItemType Directory -Force verifiche | Out-Null
+          python -m pip freeze | Out-File -Encoding utf8 verifiche/librerie.txt
+
+      - name: Dati lingua OCR per il test
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force tessdata_test | Out-Null
+          Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_fast/raw/main/ita.traineddata" `
+            -OutFile "tessdata_test/ita.traineddata"
+
+      - name: Test automatici
+        continue-on-error: true
+        env:
+          PDFPAPER_TESSDATA: ${{ github.workspace }}\tessdata_test
+        run: python -m pytest tests -v -rA --junitxml=verifiche/test.xml
+
+      - name: Analisi di sicurezza del codice (Bandit)
+        continue-on-error: true
+        run: python -m bandit -r pdfpaper.py tools -f json -o verifiche/bandit.json --exit-zero
+
+      - name: Vulnerabilità note delle librerie (pip-audit)
+        continue-on-error: true
+        run: python -m pip_audit -r requirements.txt -f json -o verifiche/pip-audit.json
+
+      - name: Rapporto delle verifiche
+        id: rapporto
+        continue-on-error: true
+        run: python tools/rapporto_verifiche.py verifiche
+
+      - name: Carica il rapporto
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: PdfPaper-verifiche
+          path: verifiche/
+          if-no-files-found: error
+
+      - name: Esito
+        if: steps.rapporto.outcome != 'success'
+        run: |
+          Write-Error "Verifiche non superate: vedi il rapporto nell'artefatto PdfPaper-verifiche"
+          exit 1
+
   build:
+    needs: verifiche
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -52,6 +112,7 @@ jobs:
           --name PdfPaper
           --icon assets/pdf_icon.ico
           --add-data "assets;assets"
+          --collect-all tkinterdnd2
           --contents-directory lib
           --version-file version_info.txt
           pdfpaper.py
@@ -118,7 +179,7 @@ jobs:
 
       - name: Pubblica la release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: PdfPaper-*.zip
           body: |
