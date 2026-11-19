@@ -51,6 +51,11 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 > Con l'OCR integrato (italiano, inglese e altre lingue) i PDF scansionati diventano documenti in cui
 > cercare, selezionare e copiare il testo, mantenendo l'aspetto originale.
 >
+> COMPILA I MODULI IN UN ATTIMO
+> PdfPaper riconosce da solo gli spazi dei moduli, anche quelli senza campi compilabili: riquadri, caselle
+> per il codice fiscale, il CAP o le date, caselle da spuntare. Clicchi e scrivi: ogni carattere finisce
+> nella sua casella.
+>
 > MODIFICA IL TESTO SENZA CHE SI NOTI
 > Aggiungi o correggi il testo: PdfPaper propone lo stesso carattere, la stessa dimensione e lo stesso
 > colore del documento. Nei PDF digitali legge il carattere originale; nelle scansioni lo stima
@@ -58,7 +63,8 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 >
 > OMISSIS VERI
 > Annerisci nomi, indirizzi e dati personali: il contenuto sotto l'area viene eliminato davvero dal
-> file, non solo coperto. Puoi scegliere il colore dello sfondo e della scritta "OMISSIS".
+> file, non solo coperto. Puoi scegliere il colore dello sfondo e della scritta "OMISSIS". Con "Pulisci"
+> elimini anche metadati, commenti, allegati e altri dati nascosti prima dell'invio.
 >
 > PAGINE, IMMAGINI E COMPRESSIONE
 > Inserisci pagine vuote, pagine da altri PDF o immagini come nuove pagine; elimina, sposta e ruota le
@@ -77,24 +83,29 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 **Caratteristiche** (una per riga, max 200 caratteri ciascuna):
 
 1. OCR integrato per rendere ricercabili i PDF scansionati
-2. Aggiunta e modifica del testo con carattere, dimensione e colore uguali al documento
-3. Omissis reali: il contenuto sotto l'area viene eliminato dal file
-4. Colori personalizzabili per sfondo e scritta dell'omissis
-5. Inserimento di immagini, firme e timbri
-6. Inserimento, eliminazione, spostamento e rotazione delle pagine (90° e 180°)
-7. Compressione dei PDF su quattro livelli
-8. Selezione del testo, copia, taglia e incolla (anche immagini)
-9. Menu del tasto destro con le operazioni più comuni
-10. Funziona senza internet e senza account: i documenti restano sul tuo PC
-11. Gratuito e open source
+2. Compilazione automatica dei moduli: riquadri, caselle a carattere singolo e caselle di spunta
+3. Aggiunta e modifica del testo con carattere, dimensione e colore uguali al documento
+4. Omissis reali: il contenuto sotto l'area viene eliminato dal file
+5. Colori personalizzabili per sfondo e scritta dell'omissis
+6. Inserimento di immagini, firme e timbri
+7. Inserimento, eliminazione, spostamento e rotazione delle pagine (90° e 180°)
+8. Compressione dei PDF su quattro livelli
+9. Selezione del testo, copia, taglia e incolla (anche immagini)
+10. Menu del tasto destro con le operazioni più comuni
+11. Funziona senza internet e senza account: i documenti restano sul tuo PC
+12. Gratuito e open source
 
 **Termini di ricerca** (max 7, max 30 caratteri ciascuno):
 
-`editor pdf` · `ocr` · `modifica pdf` · `omissis` · `comprimi pdf` · `pdf scansione` · `unisci pagine pdf`
+`editor pdf` · `ocr` · `modifica pdf` · `compila modulo pdf` · `omissis` · `comprimi pdf` · `pdf scansione`
 
 **Copyright:** © 2026 Giovanni Ciccarese. Software libero con licenza GNU AGPL v3.
 
-**Novità di questa versione:** *(lasciare vuoto alla prima pubblicazione)*
+**Novità di questa versione** (per l'aggiornamento 1.2.0):
+
+> Nuovo strumento "Compila modulo": PdfPaper riconosce da solo i riquadri, le caselle a carattere singolo
+> (codice fiscale, CAP, POD, date) e le caselle di spunta dei moduli PDF, anche senza campi compilabili.
+> Clicchi un campo e scrivi: ogni carattere va nella sua casella. Tab per passare al campo successivo.
 
 ---
 
@@ -139,6 +150,7 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 2. Add and edit text with the document's own font, size and color
 3. True redaction: content under the area is removed from the file
 4. Custom colors for redaction background and label
+5. Automatic form filling: text boxes, one-character boxes and check boxes
 5. Insert images, signatures and stamps
 6. Insert, delete, move and rotate pages (90° and 180°)
 7. PDF compression with four levels

@@ -20,7 +20,7 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 APP_NAME = "PdfPaper"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 REPO_URL = "https://github.com/gcblack1984/PdfPaper"
 APP_AUTHOR = "Creato da Giovanni CICCARESE"
 APP_TITLE = f"{APP_NAME} - {APP_AUTHOR}"
@@ -417,6 +417,290 @@ def available_fonts():
 
 
 # ----------------------------------------------------------------------------
+# Moduli "disegnati": riconoscimento dei campi (riquadri, caselle a carattere, caselle di spunta)
+# ----------------------------------------------------------------------------
+CHECK_CHARS = ("☐", "□", "❑", "◻", "▢")
+
+THIN = 1.6          # spessore massimo di un "filo" (bordo disegnato come rettangolo pieno)
+MIN_H, MAX_H = 7, 40  # altezza di un campo su una riga
+TOL = 1.2
+
+
+def _merge(segs, horizontal):
+    """Unisce i segmenti allineati e contigui. segs: (pos, a, b) con a<b."""
+    segs = sorted(segs)
+    out = []
+    for pos, a, b in segs:
+        for s in out:
+            if abs(s[0] - pos) <= TOL and a <= s[2] + 1.6 and b >= s[1] - 1.6:
+                s[1], s[2] = min(s[1], a), max(s[2], b)
+                s[0] = (s[0] + pos) / 2
+                break
+        else:
+            out.append([pos, a, b])
+    # seconda passata per unire catene
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(out)):
+            for j in range(i + 1, len(out)):
+                s, t = out[i], out[j]
+                if abs(s[0] - t[0]) <= TOL and s[1] <= t[2] + 1.6 and s[2] >= t[1] - 1.6:
+                    s[1], s[2] = min(s[1], t[1]), max(s[2], t[2])
+                    out.pop(j)
+                    changed = True
+                    break
+            if changed:
+                break
+    return out
+
+
+def _grid_cells(hsegs, vsegs):
+    """Celle formate da fili orizzontali e verticali (tabelle Word)."""
+    cells = []
+    hsegs = sorted(hsegs)
+    for i, (ty, tx0, tx1) in enumerate(hsegs):
+        for by, bx0, bx1 in hsegs[i + 1:]:
+            dy = by - ty
+            if dy < MIN_H:
+                continue
+            if dy > MAX_H:
+                break
+            x0, x1 = max(tx0, bx0), min(tx1, bx1)
+            if x1 - x0 < 4:
+                continue
+            xs = sorted(vx for vx, vy0, vy1 in vsegs
+                        if x0 - TOL <= vx <= x1 + TOL and vy0 <= ty + 1.5 and vy1 >= by - 1.5)
+            dedup = []
+            for x in xs:
+                if not dedup or x - dedup[-1] > 1.5:
+                    dedup.append(x)
+            for a, b in zip(dedup, dedup[1:]):
+                if b - a >= 4:
+                    cells.append((a, ty, b, by))
+    return cells
+
+
+def _contains(outer, inner, m=0.6):
+    return (outer[0] - m <= inner[0] and outer[1] - m <= inner[1] and
+            outer[2] + m >= inner[2] and outer[3] + m >= inner[3])
+
+
+def _area(r):
+    return max(0, r[2] - r[0]) * max(0, r[3] - r[1])
+
+
+def detect_fields(prims, words, check_rects, chars=None):
+    boxes, hs, vs = [], [], []
+    for p in prims:
+        if p[0] == "rect":
+            _, x0, y0, x1, y1, filled, stroked = p
+            w, h = x1 - x0, y1 - y0
+            if w <= THIN and h <= THIN:
+                continue                      # puntini d'angolo
+            if filled and h <= THIN:
+                hs.append(((y0 + y1) / 2, x0, x1))
+            elif filled and w <= THIN:
+                vs.append(((x0 + x1) / 2, y0, y1))
+            elif stroked:
+                boxes.append((x0, y0, x1, y1))
+                # anche i lati, per le tabelle fatte di rettangoli
+                hs += [(y0, x0, x1), (y1, x0, x1)]
+                vs += [(x0, y0, y1), (x1, y0, y1)]
+        else:
+            _, x0, y0, x1, y1 = p
+            if abs(y1 - y0) <= THIN:
+                hs.append(((y0 + y1) / 2, min(x0, x1), max(x0, x1)))
+            elif abs(x1 - x0) <= THIN:
+                vs.append(((x0 + x1) / 2, min(y0, y1), max(y0, y1)))
+    hs = [s for s in _merge(hs, True) if s[2] - s[1] >= 3]
+    vs = [s for s in _merge(vs, False) if s[2] - s[1] >= 3]
+    cand = boxes + _grid_cells(hs, vs)
+    # solo campi su una riga, non minuscoli
+    cand = [r for r in cand if MIN_H <= r[3] - r[1] <= MAX_H and r[2] - r[0] >= 6]
+    # niente duplicati; si tengono le celle più piccole (scarta i contenitori)
+    uniq = []
+    for r in sorted(cand, key=_area):
+        if any(abs(r[0] - u[0]) < 1.5 and abs(r[1] - u[1]) < 1.5 and abs(r[2] - u[2]) < 1.5
+               and abs(r[3] - u[3]) < 1.5 for u in uniq):
+            continue
+        if any(_contains(r, u) for u in uniq):
+            continue
+        uniq.append(r)
+
+    def text_in(r):
+        out = []
+        for wx0, wy0, wx1, wy1, t in (chars if chars is not None else words):
+            cx, cy = (wx0 + wx1) / 2, (wy0 + wy1) / 2
+            if r[0] < cx < r[2] and r[1] < cy < r[3]:
+                out.append((wx0, t))
+        return "".join(t for _, t in sorted(out)).strip()
+
+    cells = []
+    for r in uniq:
+        t = text_in(r)
+        cells.append(dict(rect=r, text=t))
+    # raggruppa le caselle a carattere singolo (stessa riga, adiacenti, strette)
+    cells.sort(key=lambda c: (round(c["rect"][1]), c["rect"][0]))
+    fields, used = [], set()
+    for i, c in enumerate(cells):
+        if i in used:
+            continue
+        r = c["rect"]
+        w, h = r[2] - r[0], r[3] - r[1]
+        group = [i]
+        if w <= max(22, h * 1.5):
+            last = r
+            for j in range(i + 1, len(cells)):
+                if j in used:
+                    continue
+                s = cells[j]["rect"]
+                sw = s[2] - s[0]
+                if (abs(s[1] - last[1]) <= 1.5 and abs(s[3] - last[3]) <= 1.5 and 0 <= s[0] - last[2] <= 2.5
+                        and sw <= max(22, h * 1.5)):
+                    group.append(j)
+                    last = s
+                elif s[1] - last[1] > 2:
+                    break
+        if len(group) >= 2:
+            used.update(group)
+            rs = [cells[k]["rect"] for k in group]
+            fixed = {n: cells[k]["text"] for n, k in enumerate(group) if cells[k]["text"]}
+            fields.append(dict(kind="comb", rect=(rs[0][0], min(x[1] for x in rs), rs[-1][2], max(x[3] for x in rs)),
+                               cells=rs, fixed=fixed))
+        else:
+            used.add(i)
+            if c["text"] and len(c["text"]) > 2:
+                continue                       # riquadro con testo stampato: non è un campo vuoto
+            fields.append(dict(kind="text", rect=r, cells=[r], fixed={}))
+    for r in check_rects:
+        if not any(_contains(f["rect"], r, 1) for f in fields):
+            fields.append(dict(kind="check", rect=r, cells=[r], fixed={}))
+    # etichetta: testo subito sotto (moduli Word) o subito a sinistra
+    for f in fields:
+        f["label"] = find_label(f["rect"], words, right=f["kind"] == "check")
+    fields.sort(key=lambda f: (round(f["rect"][1] / 4), f["rect"][0]))
+    return fields
+
+
+def find_label(r, words, right=False):
+    if right:  # casella di spunta: la descrizione è subito a destra
+        toks = sorted((w[0], w[4]) for w in words
+                      if abs((w[1] + w[3]) / 2 - (r[1] + r[3]) / 2) < 5 and 0 <= w[0] - r[2] <= 60)
+        out = []
+        last = r[2]
+        for x, t in toks:
+            if x - last > 12 or t in ("☐", "□"):
+                break
+            out.append(t)
+            last = x + len(t) * 4
+        return " ".join(out)[:60]
+    below = [(w[0], w[4]) for w in words
+             if 0 <= w[1] - r[3] <= 9 and w[0] >= r[0] - 2 and w[0] < r[2] - 2]
+    if below:
+        line_y = min(w[1] for w in words if 0 <= w[1] - r[3] <= 9 and r[0] - 2 <= w[0] < r[2] - 2)
+        toks = sorted((w[0], w[4]) for w in words if abs(w[1] - line_y) < 2 and r[0] - 2 <= w[0] < r[2] - 2)
+        return " ".join(t for _, t in toks)[:60]
+    left = [(w[2], w[4]) for w in words
+            if abs((w[1] + w[3]) / 2 - (r[1] + r[3]) / 2) < 6 and 0 <= r[0] - w[2] <= 40]
+    if left:
+        return max(left)[1][:60]
+    return ""
+
+
+def page_form_fields(page):
+    """Campi del modulo su una pagina PyMuPDF (coordinate della pagina non ruotata)."""
+    prims = []
+    for path in page.get_drawings():
+        kind = path.get("type") or ""
+        filled = "f" in kind or (not kind and path.get("fill") is not None)
+        stroked = "s" in kind or (not kind and path.get("color") is not None)
+        for it in path.get("items", []):
+            op = it[0]
+            if op == "re":
+                r = fitz.Rect(it[1])
+                prims.append(("rect", r.x0, r.y0, r.x1, r.y1, filled, stroked))
+            elif op == "qu":
+                r = fitz.Quad(it[1]).rect
+                prims.append(("rect", r.x0, r.y0, r.x1, r.y1, filled, stroked))
+            elif op == "l":
+                p1, p2 = it[1], it[2]
+                prims.append(("line", p1.x, p1.y, p2.x, p2.y))
+    words = [(w[0], w[1], w[2], w[3], w[4]) for w in page.get_text("words")]
+    checks = []
+    for ch in CHECK_CHARS:
+        try:
+            checks += [(r.x0, r.y0, r.x1, r.y1) for r in page.search_for(ch)]
+        except Exception:
+            pass
+    words = [w for w in words if w[4] not in CHECK_CHARS]
+    # caratteri singoli (posizione stimata dentro la parola) per riconoscere le caselle già stampate
+    chars = []
+    for x0, y0, x1, y1, t in words:
+        cw = (x1 - x0) / max(len(t), 1)
+        chars += [(x0 + k * cw, y0, x0 + (k + 1) * cw, y1, ch) for k, ch in enumerate(t)]
+    return detect_fields(prims, words, checks, chars)
+
+
+def comb_layout(field, value):
+    """Distribuisce il testo nelle caselle di un campo a caratteri singoli.
+    Restituisce {indice_casella: carattere} per le sole caselle libere."""
+    cells, fixed = field["cells"], field["fixed"]
+    n = len(cells)
+    free = [i for i in range(n) if i not in fixed]
+    val = value.strip().upper()
+    seps = {i: c for i, c in fixed.items() if c in (",", ".")}
+    if len(seps) == 1 and len(fixed) == 1:  # numero con virgola: interi a destra, decimali a sinistra
+        k = next(iter(seps))
+        v = val.replace(".", ",")
+        if "," in v or len(v) <= k:
+            ip, _, dp = v.partition(",")
+            ip, dp = ip.replace(" ", ""), dp.replace(" ", "")
+            out = {}
+            for j, ch in enumerate(reversed(ip[-k:])):
+                out[k - 1 - j] = ch
+            for j, ch in enumerate(dp[:n - k - 1]):
+                out[k + 1 + j] = ch
+            return out
+    if len(val) == n:  # testo completo, compresi i caratteri già stampati (es. IT001E..., 17/11/2026)
+        return {i: val[i] for i in free if val[i] != " "}
+    fixed_chars = set(fixed.values())
+    chars = [c for c in val if c != " " and c not in fixed_chars] if len(val) > len(free) else \
+        [c for c in val if c != " "] if len(val.replace(" ", "")) <= len(free) else list(val)
+    return {free[j]: ch for j, ch in enumerate(chars[:len(free)])}
+
+
+def draw_form_value(page, field, value):
+    """Scrive il valore di un campo sulla pagina (coordinate non ruotate)."""
+    if not value:
+        return
+    black = (0, 0, 0)
+    if field["kind"] == "check":
+        x0, y0, x1, y1 = field["rect"]
+        m = (y1 - y0) * 0.2
+        w = max(0.8, (y1 - y0) * 0.12)
+        page.draw_line(fitz.Point(x0 + m, y0 + m), fitz.Point(x1 - m, y1 - m), color=black, width=w)
+        page.draw_line(fitz.Point(x0 + m, y1 - m), fitz.Point(x1 - m, y0 + m), color=black, width=w)
+        return
+    if field["kind"] == "comb":
+        for i, ch in comb_layout(field, value).items():
+            x0, y0, x1, y1 = field["cells"][i]
+            h, w = y1 - y0, x1 - x0
+            size = min(12.0, h * 0.62, w * 1.0)
+            tw = fitz.get_text_length(ch, fontname="helv", fontsize=size)
+            page.insert_text(fitz.Point((x0 + x1) / 2 - tw / 2, y0 + (h + size * 0.7) / 2), ch,
+                             fontsize=size, fontname="helv", color=black)
+        return
+    x0, y0, x1, y1 = field["rect"]
+    h, w = y1 - y0, x1 - x0
+    size = min(11.0, h * 0.62)
+    while size > 4 and fitz.get_text_length(value, fontname="helv", fontsize=size) > w - 5:
+        size -= 0.5
+    page.insert_text(fitz.Point(x0 + 2.5, y0 + (h + size * 0.7) / 2), value, fontsize=size,
+                     fontname="helv", color=black)
+
+
+# ----------------------------------------------------------------------------
 # Stima dello stile da un'immagine (pagine scansionate)
 # ----------------------------------------------------------------------------
 SCAN_DPI = 300
@@ -764,6 +1048,122 @@ class CompressDialog(BaseDialog):
         self.destroy()
 
 
+SANITIZE_ITEMS = [  # chiave, descrizione, attivo di default
+    ("meta", "Metadati: autore, titolo, oggetto, parole chiave, programma, date (anche XMP)", True),
+    ("annots", "Commenti e annotazioni: note, evidenziazioni, timbri, disegni a mano", True),
+    ("attachments", "File allegati incorporati nel PDF", True),
+    ("bookmarks", "Segnalibri (indice laterale)", True),
+    ("links", "Collegamenti a pagine web e ad altre parti del documento", True),
+    ("js", "Codice JavaScript", True),
+    ("fields", "Valori dei campi compilabili (i campi restano, vuoti)", False),
+    ("hidden", "Testo invisibile, compreso il livello di testo creato dall'OCR", False),
+]
+
+
+def inspect_hidden(doc):
+    """Conta i dati 'nascosti' presenti nel documento."""
+    out = {}
+    try:
+        out["meta"] = sum(1 for k, v in (doc.metadata or {}).items()
+                          if v and k not in ("format", "encryption")) + (1 if doc.get_xml_metadata() else 0)
+    except Exception:
+        out["meta"] = None
+    try:
+        out["attachments"] = doc.embfile_count()
+    except Exception:
+        out["attachments"] = None
+    try:
+        out["bookmarks"] = len(doc.get_toc())
+    except Exception:
+        out["bookmarks"] = None
+    annots = links = fields = 0
+    for page in doc:
+        try:
+            annots += sum(1 for _ in page.annots())
+            links += len(page.get_links())
+            fields += sum(1 for _ in page.widgets())
+        except Exception:
+            pass
+    out.update(annots=annots, links=links, fields=fields)
+    js = 0
+    try:
+        for x in range(1, min(doc.xref_length(), 200000)):
+            obj = doc.xref_object(x, compressed=True)
+            if "/JS" in obj or "/JavaScript" in obj:
+                js += 1
+    except Exception:
+        js = None
+    out["js"] = js
+    out["hidden"] = None
+    return out
+
+
+def sanitize_document(doc, opts):
+    """Rimuove i dati nascosti scelti. opts = {chiave: bool}."""
+    kw = dict(attached_files=opts["attachments"], embedded_files=opts["attachments"],
+              hidden_text=opts["hidden"], javascript=opts["js"], metadata=opts["meta"],
+              redactions=False, remove_links=opts["links"], reset_fields=opts["fields"],
+              reset_responses=opts["annots"], thumbnails=True, xml_metadata=opts["meta"],
+              clean_pages=opts["hidden"])
+    try:
+        doc.scrub(**kw)
+    except Exception:
+        pass  # versioni diverse di PyMuPDF: si completa a mano qui sotto
+    steps = []
+    if opts["meta"]:
+        steps.append(lambda: doc.set_metadata({}))
+        steps.append(lambda: doc.del_xml_metadata())
+    if opts["attachments"]:
+        steps.append(lambda: [doc.embfile_del(n) for n in doc.embfile_names()])
+    if opts["bookmarks"]:
+        steps.append(lambda: doc.set_toc([]))
+    for step in steps:
+        try:
+            step()
+        except Exception:
+            pass
+    for page in doc:
+        if opts["annots"]:
+            try:
+                a = page.first_annot
+                while a:
+                    a = page.delete_annot(a)
+            except Exception:
+                pass
+        if opts["links"]:
+            try:
+                for ln in page.get_links():
+                    page.delete_link(ln)
+            except Exception:
+                pass
+
+
+class SanitizeDialog(BaseDialog):
+    def __init__(self, master, found):
+        super().__init__(master, "Rimuovi metadati e dati nascosti")
+        ttk.Label(self.body, text="Elimina dal file i dati che non si vedono sulla pagina ma possono rivelare\n"
+                                  "informazioni (consigliato prima di inviare un documento omissato).",
+                  justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.vars = {}
+        for r, (key, text, default) in enumerate(SANITIZE_ITEMS, start=1):
+            n = found.get(key)
+            var = tk.BooleanVar(value=default)
+            self.vars[key] = var
+            ttk.Checkbutton(self.body, text=text, variable=var).grid(row=r, column=0, sticky="w")
+            if n is not None:
+                ttk.Label(self.body, text="presenti: %d" % n if n else "nessuno",
+                          foreground="#c62828" if n else "#888").grid(row=r, column=1, sticky="e", padx=(12, 0))
+        ttk.Label(self.body, foreground="#666", justify="left",
+                  text="Il testo invisibile resta selezionato solo se lo scegli: toglierlo rende di nuovo\n"
+                       "non ricercabili le scansioni a cui hai fatto l'OCR.").grid(
+            row=len(SANITIZE_ITEMS) + 1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.buttons("Rimuovi")
+
+    def _ok(self):
+        self.result = {k: v.get() for k, v in self.vars.items()}
+        self.destroy()
+
+
 class Job:
     """Esegue un lavoro lungo in un thread con finestra di avanzamento modale."""
 
@@ -1086,6 +1486,7 @@ class ToolTip:
 
 MODES = {
     "view": ("Sfoglia", "Scorri e consulta il documento"),
+    "form": ("Compila modulo", "Clicca un campo del modulo e scrivi · Tab: campo successivo · Invio: conferma"),
     "select": ("Seleziona testo", "Trascina sul testo per selezionarlo · tasto destro: copia, taglia, incolla e altro"),
     "text": ("Aggiungi testo", "Clicca o trascina un riquadro dove inserire il testo"),
     "edit": ("Modifica testo", "Trascina un riquadro attorno al testo da sostituire (includi tutta la riga)"),
@@ -1116,6 +1517,10 @@ class PdfPaperApp:
         self._clip_meta = None   # (testo, stile) dell'ultima copia da PdfPaper
         self._gen = 0            # aumenta a ogni modifica (per le cache)
         self.doc_font = None     # carattere scelto dall'utente per il documento aperto
+        self.form = {}           # compilazione moduli: {pagina: {"base", "fields", "values", "gen"}}
+        self._form_cache, self._form_cache_key = [], None
+        self._form_entry = None  # casella di testo aperta sopra un campo
+        self._form_commits = 0
         self.mode = tk.StringVar(value="view")
         self.settings = load_settings()
         self.redact_label = tk.BooleanVar(value=self.settings.get("omissis_scritta", True))
@@ -1132,6 +1537,7 @@ class PdfPaperApp:
         self._bind_keys()
         root.protocol("WM_DELETE_WINDOW", self.quit)
         self.mode.trace_add("write", lambda *a: self._update_status())
+        self.mode.trace_add("write", lambda *a: self._on_mode_change())
         self._update_status()
 
     # ---------------------------------------------------------------- UI
@@ -1155,10 +1561,11 @@ class PdfPaperApp:
         e.add_command(label="Elimina testo selezionato", accelerator="Canc", command=self.delete_selection)
         e.add_command(label="Seleziona tutto il testo della pagina", accelerator="Ctrl+A", command=self.select_all)
         e.add_separator()
-        for key in ("select", "text", "edit", "image", "redact"):
+        for key in ("select", "text", "edit", "form", "image", "redact"):
             e.add_radiobutton(label=MODES[key][0], variable=self.mode, value=key)
         e.add_separator()
         e.add_checkbutton(label="Scritta \"OMISSIS\" sulle aree omissate", variable=self.redact_label)
+        e.add_command(label="Svuota i campi compilati della pagina", command=self.clear_form_page)
         e.add_command(label="Colore sfondo omissis...", command=self.choose_redact_fill)
         e.add_command(label="Colore scritta omissis...", command=self.choose_redact_fg)
         m.add_cascade(label="Modifica", menu=e)
@@ -1180,6 +1587,7 @@ class PdfPaperApp:
         t.add_command(label="OCR (rendi ricercabile)...", command=self.run_ocr)
         t.add_command(label="Comprimi...", command=self.compress)
         t.add_command(label="Estrai testo...", command=self.extract_text)
+        t.add_command(label="Rimuovi metadati e dati nascosti...", command=self.sanitize)
         m.add_cascade(label="Strumenti", menu=t)
 
         v = tk.Menu(m, tearoff=False)
@@ -1258,6 +1666,8 @@ class PdfPaperApp:
         tool(g, "select", "Aa Seleziona testo", "Trascina sul testo per selezionarlo")
         tool(g, "text", "T+ Aggiungi testo", "Clicca o trascina un riquadro dove scrivere")
         tool(g, "edit", "✎ Modifica testo", "Trascina un riquadro sul testo da sostituire")
+        tool(g, "form", "☑ Compila modulo", "Riconosce i campi di un modulo (riquadri, caselle, spunte):\n"
+                                           "clicca un campo e scrivi, Tab per passare al successivo")
         tool(g, "image", "🖼 Immagine", "Trascina il riquadro in cui inserire un'immagine")
         tool(g, "redact", "█ Omissis", "Trascina il riquadro da omissare (eliminazione definitiva)")
 
@@ -1275,12 +1685,6 @@ class PdfPaperApp:
         ToolTip(self.btn_fg, "Colore della scritta OMISSIS")
         self._paint_redact_buttons()
 
-        g = group(1, "Appunti")
-        btn(g, "❐ Copia", self.copy_selection, "Copia il testo selezionato (Ctrl+C)")
-        btn(g, "✂ Taglia", self.cut_selection, "Copia il testo selezionato e lo elimina dalla pagina (Ctrl+X)")
-        btn(g, "📋 Incolla", self.paste, "Incolla testo o immagine dagli appunti (Ctrl+V)\n"
-                                         "nel punto dell'ultimo clic sulla pagina")
-
         # --- riga 3: gestione pagine, documento
         g = group(2, "Pagine")
         btn(g, "+ Pagina vuota", self.insert_blank, "Inserisci una o più pagine bianche")
@@ -1293,6 +1697,14 @@ class PdfPaperApp:
         btn(g, "🔍 OCR", self.run_ocr, "Rendi ricercabile un PDF scansionato")
         btn(g, "🗜 Comprimi", self.compress, "Riduci il peso del file")
         btn(g, "📄 Estrai testo", self.extract_text, "Mostra e salva tutto il testo del documento")
+        btn(g, "🧹 Pulisci", self.sanitize, "Rimuovi metadati, commenti, allegati e altri dati nascosti\n"
+                                          "(consigliato prima di inviare un documento omissato)")
+        g = group(2, "Appunti")
+        btn(g, "❐ Copia", self.copy_selection, "Copia il testo selezionato (Ctrl+C)")
+        btn(g, "✂ Taglia", self.cut_selection, "Copia il testo selezionato e lo elimina dalla pagina (Ctrl+X)")
+        btn(g, "📋 Incolla", self.paste, "Incolla testo o immagine dagli appunti (Ctrl+V)\n"
+                                         "nel punto dell'ultimo clic sulla pagina")
+
         ttk.Separator(self.root, orient="horizontal").pack(side="top", fill="x")
 
     def _build_body(self):
@@ -1339,12 +1751,12 @@ class PdfPaperApp:
         r.bind("<Control-o>", lambda e: self.open_file())
         r.bind("<Control-s>", lambda e: self.save())
         r.bind("<Control-S>", lambda e: self.save_as())
-        r.bind("<Control-z>", lambda e: self.undo())
+        r.bind("<Control-z>", lambda e: self._key(e, self.undo))
         r.bind("<Control-plus>", lambda e: self.set_zoom(self.zoom * 1.2))
         r.bind("<Control-equal>", lambda e: self.set_zoom(self.zoom * 1.2))
         r.bind("<Control-minus>", lambda e: self.set_zoom(self.zoom / 1.2))
-        r.bind("<Next>", lambda e: self.next_page())
-        r.bind("<Prior>", lambda e: self.prev_page())
+        r.bind("<Next>", lambda e: self._key(e, self.next_page))
+        r.bind("<Prior>", lambda e: self._key(e, self.prev_page))
         r.bind("<Escape>", lambda e: self._escape())
         r.bind("<Control-r>", lambda e: self.rotate(90))
         r.bind("<Control-R>", lambda e: self.rotate(-90))
@@ -1379,6 +1791,7 @@ class PdfPaperApp:
         return True
 
     def _confirm_discard(self):
+        self._form_close_editor(True)
         if self.doc and self.dirty:
             r = messagebox.askyesnocancel(APP_NAME, "Il documento è stato modificato. Salvare le modifiche?")
             if r is None:
@@ -1408,6 +1821,7 @@ class PdfPaperApp:
         self.doc, self.path = doc, path
         self.page_no, self.history, self.dirty = 0, [], False
         self.doc_font, self._clip_meta = None, None
+        self.form, self._form_entry = {}, None
         self._gen += 1
         self.refresh(rebuild_list=True)
         self.root.after(50, self.fit_width)
@@ -1417,6 +1831,7 @@ class PdfPaperApp:
             return
         self.doc, self.path, self.history, self.dirty = None, None, [], False
         self.doc_font, self._clip_meta = None, None
+        self.form, self._form_entry = {}, None
         self.pages_lb.delete(0, "end")
         self.page_total.config(text="/ 0")
         self.page_var.set("0")
@@ -1435,6 +1850,7 @@ class PdfPaperApp:
         return data
 
     def save(self):
+        self._form_close_editor(True)
         if not self._need_doc():
             return False
         if not self.path:
@@ -1442,6 +1858,7 @@ class PdfPaperApp:
         return self._write(self.path)
 
     def save_as(self):
+        self._form_close_editor(True)
         if not self._need_doc():
             return False
         initial = os.path.splitext(os.path.basename(self.path or "documento.pdf"))[0] + "_modificato.pdf"
@@ -1472,24 +1889,36 @@ class PdfPaperApp:
 
     # ---------------------------------------------------------------- undo
     def _checkpoint(self):
-        self.history.append(self.doc.tobytes())
+        data = self.doc.tobytes(garbage=1) if self.form else self.doc.tobytes()
+        self.history.append((data, self._form_snapshot()))
         if len(self.history) > MAX_UNDO:
             self.history.pop(0)
 
     def _changed(self, rebuild_list=False):
         self.dirty = True
         self._gen += 1
+        if rebuild_list:  # pagine aggiunte/tolte o documento sostituito: i campi compilati restano fissati
+            self.form = {}
         self.refresh(rebuild_list=rebuild_list)
 
     def undo(self):
         if not self.doc or not self.history:
             return
-        self.doc = fitz.open("pdf", self.history.pop())
+        entry = self.history.pop()
+        data, fstate = entry if isinstance(entry, tuple) else (entry, None)
+        self._form_close_editor(False)
+        self.doc = fitz.open("pdf", data)
         self.page_no = min(self.page_no, len(self.doc) - 1)
         self._changed(rebuild_list=True)
+        self.form = fstate or {}
+        for st in self.form.values():
+            st["gen"] = self._gen
+        self._draw_form_overlay()
 
     # ---------------------------------------------------------------- visualizzazione
     def refresh(self, rebuild_list=False):
+        if self._form_entry is not None:
+            self._form_close_editor(True)  # salva il campo in modifica prima di ridisegnare
         if not self.doc:
             return
         n = len(self.doc)
@@ -1519,6 +1948,8 @@ class PdfPaperApp:
         self.canvas.config(scrollregion=(0, 0, pix.width + 2 * self._ox, pix.height + 20))
         self._load_words(page)
         self._update_status()
+        if self.mode.get() == "form":
+            self._draw_form_overlay()
 
     def goto(self, n):
         if self.doc and 0 <= n < len(self.doc):
@@ -1576,10 +2007,14 @@ class PdfPaperApp:
     def _on_press(self, e):
         if not self.doc:
             return
+        self._form_close_editor(True)
         self.canvas.focus_set()
         x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
         self._ctx_pt = self._canvas_to_vis(x, y)
         mode = self.mode.get()
+        if mode == "form":
+            self._form_click(x, y)
+            return
         if mode == "view":
             self.canvas.scan_mark(e.x, e.y)
             self._drag = ("pan",)
@@ -1925,6 +2360,15 @@ class PdfPaperApp:
         has_sel = bool(self._sel_count())
         on = "normal" if has_sel else "disabled"
         m = tk.Menu(self.root, tearoff=False)
+        if self.mode.get() == "form":
+            self._form_close_editor(True)
+            fi = self._form_field_at(x, y)
+            if fi is not None:
+                fname = self._form_fields_current()[fi].get("label") or "campo"
+                m.add_command(label=f"✎  Scrivi in «{fname}»", command=lambda: self._form_click(x, y))
+                m.add_command(label=f"✕  Svuota «{fname}»", state="normal" if self._form_value(fi) else "disabled",
+                              command=lambda: self._form_set(fi, ""))
+                m.add_separator()
         m.add_command(label="❐  Copia", accelerator="Ctrl+C", state=on, command=self.copy_selection)
         m.add_command(label="✂  Taglia", accelerator="Ctrl+X", state=on, command=self.cut_selection)
         m.add_command(label="📋  Incolla qui", accelerator="Ctrl+V",
@@ -2106,6 +2550,204 @@ class PdfPaperApp:
         """Se l'utente cambia il carattere proposto, lo ricorda per il resto del documento."""
         if res and style.get("font") is not None and res["font"].label != style["font"].label:
             self.doc_font = res["font"]
+
+    # ---------------------------------------------------------------- compilazione dei moduli
+    def _form_fields_current(self):
+        pno = self.page_no
+        st = self.form.get(pno)
+        if st:
+            return st["fields"]
+        key = (self._gen, pno)
+        if self._form_cache_key != key:
+            try:
+                self._form_cache = page_form_fields(self.doc[pno])
+            except Exception:
+                self._form_cache = []
+            self._form_cache_key = key
+        return self._form_cache
+
+    def _form_value(self, i):
+        return self.form.get(self.page_no, {}).get("values", {}).get(i, "")
+
+    def _field_canvas_rect(self, r):
+        page = self.doc[self.page_no]
+        return self._vis_rect_to_canvas(fitz.Rect(r) * page.rotation_matrix)
+
+    def _on_mode_change(self):
+        self._form_close_editor(True)
+        if self.mode.get() == "form" and self.doc:
+            self._draw_form_overlay()
+        else:
+            self.canvas.delete("form")
+
+    def _draw_form_overlay(self):
+        self.canvas.delete("form")
+        if not self.doc or self.mode.get() != "form":
+            return
+        fields = self._form_fields_current()
+        colors = {"text": "#1e88e5", "comb": "#43a047", "check": "#fb8c00"}
+        for i, f in enumerate(fields):
+            col = colors[f["kind"]]
+            empty = not self._form_value(i)
+            for n, c in enumerate(f["cells"]):
+                if f["kind"] == "comb" and n in f["fixed"]:
+                    continue
+                x0, y0, x1, y1 = self._field_canvas_rect(c)
+                if empty and sys.platform != "darwin":
+                    self.canvas.create_rectangle(x0, y0, x1, y1, outline=col, width=1.5, fill=col,
+                                                 stipple="gray12", tags="form")
+                else:
+                    self.canvas.create_rectangle(x0, y0, x1, y1, outline=col, width=1, tags="form")
+        if fields:
+            done = sum(1 for i in range(len(fields)) if self._form_value(i))
+            self.status.config(text=f"Modulo: {len(fields)} campi riconosciuti in questa pagina ({done} compilati) · "
+                                    f"clicca un campo per scrivere · Tab: campo successivo · Invio: conferma")
+        else:
+            self.status.config(text="Nessun campo da compilare riconosciuto in questa pagina")
+
+    def _form_field_at(self, x, y):
+        for i, f in enumerate(self._form_fields_current()):
+            x0, y0, x1, y1 = self._field_canvas_rect(f["rect"])
+            if x0 - 2 <= x <= x1 + 2 and y0 - 2 <= y <= y1 + 2:
+                return i
+        return None
+
+    def _form_click(self, x, y):
+        i = self._form_field_at(x, y)
+        if i is None:
+            return
+        f = self._form_fields_current()[i]
+        if f["kind"] == "check":
+            self._form_set(i, "" if self._form_value(i) else "X")
+        else:
+            self._form_open_editor(i)
+
+    def _field_hint(self, f):
+        name = f.get("label") or {"text": "campo di testo", "comb": "caselle", "check": "casella"}[f["kind"]]
+        if f["kind"] == "comb":
+            free = len(f["cells"]) - len(f["fixed"])
+            extra = ""
+            if f["fixed"]:
+                extra = " · già stampati: " + " ".join(f["fixed"][k] for k in sorted(f["fixed"]))
+            return f"{name} · {free} caselle{extra}"
+        return name
+
+    def _ensure_visible(self, y0, y1):
+        top = self.canvas.canvasy(0)
+        h = self.canvas.winfo_height()
+        sr = self.canvas.cget("scrollregion").split()
+        total = float(sr[3]) if len(sr) == 4 else 0
+        if total and (y0 < top or y1 > top + h):
+            self.canvas.yview_moveto(max(0.0, (y0 - h / 3) / total))
+
+    def _form_open_editor(self, i):
+        self._form_close_editor(True)
+        fields = self._form_fields_current()
+        if not 0 <= i < len(fields):
+            return
+        f = fields[i]
+        x0, y0, x1, y1 = self._field_canvas_rect(f["rect"])
+        self._ensure_visible(y0, y1)
+        h = max(y1 - y0, 16)
+        var = tk.StringVar(value=self._form_value(i))
+        ent = tk.Entry(self.canvas, textvariable=var, font=("Segoe UI", -max(10, int(h * 0.6))),
+                       relief="solid", bd=1, bg="#fffde7", highlightthickness=2,
+                       highlightcolor="#1565c0", highlightbackground="#1565c0")
+        win = self.canvas.create_window(x0, y0, anchor="nw", window=ent, width=max(x1 - x0, 70), height=h,
+                                        tags="formedit")
+        self._form_entry = (ent, win, i, var)
+        ent.bind("<Return>", lambda e: (self._form_close_editor(True), "break")[1])
+        ent.bind("<KP_Enter>", lambda e: (self._form_close_editor(True), "break")[1])
+        ent.bind("<Tab>", lambda e: (self._form_next(1), "break")[1])
+        ent.bind("<Shift-Tab>", lambda e: (self._form_next(-1), "break")[1])
+        ent.bind("<ISO_Left_Tab>", lambda e: (self._form_next(-1), "break")[1])
+        ent.bind("<Escape>", lambda e: (self._form_close_editor(False), "break")[1])
+        attach_edit_menu(ent)
+        ent.focus_set()
+        ent.select_range(0, "end")
+        ent.icursor("end")
+        self.status.config(text=f"✎ {self._field_hint(f)} · Invio: conferma · Tab: successivo · Esc: annulla")
+
+    def _form_close_editor(self, commit=True):
+        if not self._form_entry:
+            return
+        ent, win, i, var = self._form_entry
+        self._form_entry = None
+        value = var.get().strip()
+        try:
+            self.canvas.delete(win)
+            ent.destroy()
+        except tk.TclError:
+            pass
+        if commit and self.doc and value != self._form_value(i):
+            self._form_set(i, value)
+
+    def _form_next(self, step):
+        if not self._form_entry:
+            return
+        i = self._form_entry[2]
+        self._form_close_editor(True)
+        fields = self._form_fields_current()
+        j = i + step
+        while 0 <= j < len(fields) and fields[j]["kind"] == "check":
+            j += step
+        if 0 <= j < len(fields):
+            self._form_open_editor(j)
+
+    def _form_snapshot(self):
+        return {p: dict(st, values=dict(st["values"])) for p, st in self.form.items()}
+
+    def _form_set(self, i, value):
+        """Imposta il valore di un campo: la pagina viene ricostruita dall'originale e riscritta con
+        tutti i valori, così un campo si può correggere o svuotare senza lasciare tracce."""
+        pno = self.page_no
+        fields = self._form_fields_current()
+        st = self.form.get(pno)
+        if st is None or st["gen"] != self._gen:
+            if st is not None and st["values"]:
+                self.status.config(text="Il documento è stato modificato: i campi compilati finora sono stati "
+                                        "fissati nella pagina")
+            tmp = fitz.open()
+            tmp.insert_pdf(self.doc, from_page=pno, to_page=pno)
+            st = {"base": tmp.tobytes(), "fields": fields, "values": {}, "gen": self._gen}
+            self.form[pno] = st
+        if (st["values"].get(i) or "") == value:
+            return
+        self._checkpoint()
+        if value:
+            st["values"][i] = value
+        else:
+            st["values"].pop(i, None)
+        self._form_render(pno, st)
+        self._form_commits += 1
+        if self._form_commits % 10 == 0:  # elimina le copie inutilizzate della pagina
+            self.doc = fitz.open("pdf", self.doc.tobytes(garbage=1))
+        self._changed()
+        st["gen"] = self._gen
+
+    def _form_render(self, pno, st):
+        base = fitz.open("pdf", st["base"])
+        self.doc.delete_page(pno)
+        self.doc.insert_pdf(base, from_page=0, to_page=0, start_at=pno if pno < len(self.doc) else -1)
+        page = self.doc[pno]
+        for i, val in st["values"].items():
+            try:
+                draw_form_value(page, st["fields"][i], val)
+            except Exception:
+                pass
+
+    def clear_form_page(self):
+        st = self.form.get(self.page_no)
+        if not st or not st["values"] or st["gen"] != self._gen:
+            self.status.config(text="Nessun campo compilato da svuotare in questa pagina")
+            return
+        if not messagebox.askyesno(APP_NAME, "Svuotare tutti i campi compilati in questa pagina?"):
+            return
+        self._checkpoint()
+        st["values"].clear()
+        self._form_render(self.page_no, st)
+        self._changed()
+        st["gen"] = self._gen
 
     # ---------------------------------------------------------------- strumenti di modifica
     @staticmethod
@@ -2365,7 +3007,7 @@ class PdfPaperApp:
         before = self.doc.tobytes()
 
         def done(data, count):
-            self.history.append(before)
+            self.history.append((before, self._form_snapshot()))
             self.doc = fitz.open("pdf", data)
             self._changed(rebuild_list=True)
             messagebox.showinfo(APP_NAME, f"OCR completato su {count} pagina/e." if count else
@@ -2391,7 +3033,7 @@ class PdfPaperApp:
                                               f"({human_size(ref_size)} → {human_size(len(data))}).\n"
                                               f"Prova un livello più forte.")
                 return
-            self.history.append(before)
+            self.history.append((before, self._form_snapshot()))
             self.doc = fitz.open("pdf", data)
             self._changed(rebuild_list=True)
             pct = 100 * (1 - len(data) / ref_size)
@@ -2409,6 +3051,41 @@ class PdfPaperApp:
             except Cancelled:
                 return None
         return wrapped
+
+    def sanitize(self):
+        if not self._need_doc():
+            return
+        self._form_close_editor(True)
+        found = inspect_hidden(self.doc)
+        opts = SanitizeDialog(self.root, found).show()
+        if not opts or not any(opts.values()):
+            return
+        self._checkpoint()
+        try:
+            sanitize_document(self.doc, opts)
+        except Exception as exc:
+            self.undo()
+            messagebox.showerror(APP_NAME, f"Pulizia non riuscita:\n\n{exc}")
+            return
+        self._changed(rebuild_list=True)
+        after = inspect_hidden(self.doc)
+        names = {"meta": "metadati", "annots": "commenti e annotazioni", "attachments": "allegati",
+                 "bookmarks": "segnalibri", "links": "collegamenti", "js": "elementi JavaScript",
+                 "fields": "campi compilabili"}
+        lines = []
+        for key, label in names.items():
+            if opts.get(key) and found.get(key):
+                left = after.get(key) or 0
+                if key == "fields":
+                    lines.append(f"• {label}: svuotati")
+                else:
+                    lines.append(f"• {label}: {found[key] - left} rimossi" + (f" ({left} non rimovibili)" if left else ""))
+        if opts.get("hidden"):
+            lines.append("• testo invisibile: rimosso")
+        msg = "\n".join(lines) if lines else "Il documento non conteneva dati nascosti tra quelli scelti."
+        messagebox.showinfo(APP_NAME, "Pulizia completata.\n\n" + msg +
+                            "\n\nRicorda di salvare: PdfPaper riscrive il file da zero, quindi nel file salvato non "
+                            "restano copie precedenti dei dati eliminati.")
 
     def extract_text(self):
         if not self._need_doc():

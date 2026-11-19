@@ -1,5 +1,22 @@
 # Novità / Changelog
 
+## 1.2.0 (novembre 2026)
+
+- Nuovo strumento **Compila modulo**: riconosce da solo gli spazi dei moduli PDF "disegnati" (per esempio
+  quelli creati con Word), anche quando non hanno campi compilabili:
+  - **riquadri di testo**: il testo viene centrato in altezza e ridotto se è troppo lungo;
+  - **caselle a carattere singolo** (codice fiscale, CAP, POD, date, importi): ogni carattere va nella sua
+    casella, saltando quelle già stampate (es. "IT" ed "E" del POD, le barre della data); nei numeri con
+    virgola gli interi si allineano prima della virgola e i decimali dopo;
+  - **caselle di spunta** (☐): si segnano e si tolgono con un clic.
+- Si scrive direttamente sopra il campo; Tab passa al campo successivo, Invio conferma, Esc annulla.
+  Un campo si può correggere o svuotare in qualsiasi momento senza lasciare tracce; Ctrl+Z annulla.
+- Con il tasto destro su un campo: Scrivi / Svuota. Nel menu Modifica: "Svuota i campi compilati della pagina".
+- Nuova funzione **Pulisci** (Strumenti → Rimuovi metadati e dati nascosti): elimina dal file metadati
+  (autore, titolo, programma, date, XMP), commenti e annotazioni, allegati, segnalibri, collegamenti e
+  JavaScript; a scelta svuota i campi compilabili e toglie il testo invisibile. Mostra prima quanti dati
+  di ogni tipo sono presenti. Consigliata prima di inviare un documento omissato.
+
 ## 1.1.0 (novembre 2026)
 
 - Nuovo strumento **Seleziona testo**: si seleziona il testo trascinando sulla pagina, con evidenziazione.

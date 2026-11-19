@@ -5,6 +5,8 @@
 **PdfPaper** è un editor PDF portabile per Windows: si avvia senza installazione e funziona
 interamente sul computer, senza connessione a internet.
 
+*Get it on the [Microsoft Store](https://apps.microsoft.com/detail/9MXW1DCLHC45).*
+
 *PdfPaper is a portable PDF editor for Windows (no installation, fully offline): OCR, text editing,
 image insertion, page management, compression and true redaction. User interface in Italian.*
 
@@ -19,6 +21,9 @@ Creato da Giovanni CICCARESE.
 - **Pagine**: inserimento (vuote, da altro PDF, da immagine), eliminazione, rotazione, spostamento
 - **Compressione**: quattro livelli, da "solo ottimizzazione" a "forte"
 - **Omissis**: redazione reale, il contenuto sotto l'area viene eliminato dal file
+- **Pulizia dei dati nascosti**: metadati, commenti, allegati, segnalibri, collegamenti, JavaScript
+- **Compilazione dei moduli**: riconosce riquadri, caselle a carattere singolo (codice fiscale, CAP, date…)
+  e caselle di spunta anche nei PDF senza campi compilabili, e scrive ogni dato al posto giusto
 - **Selezione del testo** sulla pagina, con copia, taglia, incolla (anche immagini dagli appunti)
 - **Menu del tasto destro** con le operazioni più comuni
 - **Rotazione** delle pagine di 90° a destra, 90° a sinistra o 180° con un clic
@@ -29,7 +34,10 @@ La guida completa con illustrazioni è in [docs/Guida_PdfPaper.pdf](docs/Guida_P
 ## Download e uso
 
 **Microsoft Store** (consigliato): installazione firmata da Microsoft e aggiornamenti automatici.
-*(Il link verrà aggiunto dopo la pubblicazione.)*
+
+[![Scarica da Microsoft Store](https://get.microsoft.com/images/it%20dark.svg)](https://apps.microsoft.com/detail/9MXW1DCLHC45)
+
+https://apps.microsoft.com/detail/9MXW1DCLHC45
 
 **Versione portabile**, senza installazione:
 
