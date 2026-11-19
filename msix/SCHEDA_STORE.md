@@ -101,7 +101,7 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 
 **Copyright:** © 2026 Giovanni Ciccarese. Software libero con licenza GNU AGPL v3.
 
-**Novità di questa versione** (per l'aggiornamento 1.3.0):
+**Novità di questa versione** (per l'aggiornamento 1.3.1):
 
 > Nuova funzione "Unisci PDF": metti insieme più file, o tutti i PDF di una cartella, in un unico documento.
 > Ora puoi aprire un PDF trascinandolo dentro la finestra di PdfPaper. Il testo che aggiungi, modifichi o

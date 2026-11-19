@@ -131,7 +131,7 @@ def main():
         with open(os.path.join(ROOT, "version_info.txt"), encoding="utf-8") as fh:
             for line in fh:
                 if "ProductVersion" in line:
-                    version = line.split("'")[3]
+                    version = ".".join(line.split("'")[3].split(".")[:3])  # 1.3.0.0 -> 1.3.0
     except (OSError, IndexError):
         pass
 

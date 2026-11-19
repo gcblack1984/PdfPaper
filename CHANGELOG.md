@@ -1,5 +1,11 @@
 # Novità / Changelog
 
+## 1.3.1 (novembre 2026)
+
+- La schermata di avvio elenca anche le nuove funzioni (Unisci PDF, compilazione moduli, pulizia dei dati,
+  apertura trascinando i file).
+- Rapporto delle verifiche automatiche: la versione è indicata nella forma breve (1.3.1).
+
 ## 1.3.0 (novembre 2026)
 
 - **Trascinamento dei file**: con PdfPaper aperto si può trascinare un PDF da Esplora file dentro la finestra

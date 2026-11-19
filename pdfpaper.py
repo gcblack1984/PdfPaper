@@ -21,7 +21,7 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 APP_NAME = "PdfPaper"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 REPO_URL = "https://github.com/gcblack1984/PdfPaper"
 APP_AUTHOR = "Creato da Giovanni CICCARESE"
 APP_TITLE = f"{APP_NAME} - {APP_AUTHOR}"
@@ -137,8 +137,10 @@ class Splash(tk.Toplevel):
                      font=("Segoe UI", 28, "bold"), padx=20).pack(pady=(40, 10))
         tk.Label(self, text=APP_NAME, fg="white", bg=self.BG,
                  font=("Segoe UI", 22, "bold")).pack()
-        tk.Label(self, text="OCR · Modifica · Pagine · Compressione · Omissis",
-                 fg="#aab2c5", bg=self.BG, font=("Segoe UI", 9)).pack(pady=(0, 16))
+        for i, line in enumerate(("OCR · Modifica testo · Compila moduli · Omissis · Pulizia dati",
+                                  "Unisci PDF · Pagine · Compressione · Trascina e apri")):
+            tk.Label(self, text=line, fg="#aab2c5", bg=self.BG,
+                     font=("Segoe UI", 9)).pack(pady=(0, 16 if i else 0))
 
         self.bar = ttk.Progressbar(self, style="Splash.Horizontal.TProgressbar",
                                    length=400, mode="determinate", maximum=100)
