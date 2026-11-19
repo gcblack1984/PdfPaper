@@ -125,6 +125,8 @@ jobs:
             **PdfPaper ${{ github.ref_name }}**: editor PDF per Windows (OCR, modifica testo, immagini,
             gestione pagine, compressione, omissis).
 
+            **Microsoft Store** (consigliato, firmato e con aggiornamenti automatici): https://apps.microsoft.com/detail/9MXW1DCLHC45
+
             **Versione portabile**: estrai lo zip e avvia `PdfPaper\PdfPaper.exe`. Per disinstallare
             elimina la cartella. Non è firmata digitalmente: al primo avvio Windows può chiedere conferma.
 
