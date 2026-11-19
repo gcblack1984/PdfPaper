@@ -40,7 +40,7 @@ def main():
     dest = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "dist", "PdfPaper", "licenze")
     os.makedirs(dest, exist_ok=True)
     print("Licenze dei componenti ->", dest)
-    for d in ("PyMuPDF", "pillow", "pyinstaller"):
+    for d in ("PyMuPDF", "pillow", "tkinterdnd2", "pyinstaller"):
         copy_dist(d, dest)
     base = sys.base_prefix
     copy_file(os.path.join(base, "LICENSE.txt"), dest, "Python-LICENSE.txt")

@@ -7,7 +7,8 @@ PdfPaper - editor PDF portabile
   * compressione
   * omissis (redazione reale: il contenuto sotto l'area viene rimosso)
 
-Dipendenze: PyMuPDF, Pillow (Tkinter incluso in Python per Windows).
+Dipendenze: PyMuPDF, Pillow, tkinterdnd2 facoltativo per il trascinamento
+(Tkinter incluso in Python per Windows).
 """
 import io
 import os
@@ -20,7 +21,7 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 APP_NAME = "PdfPaper"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 REPO_URL = "https://github.com/gcblack1984/PdfPaper"
 APP_AUTHOR = "Creato da Giovanni CICCARESE"
 APP_TITLE = f"{APP_NAME} - {APP_AUTHOR}"
@@ -1048,6 +1049,118 @@ class CompressDialog(BaseDialog):
         self.destroy()
 
 
+class MergeDialog(BaseDialog):
+    """Elenco dei PDF da unire: file scelti, cartelle, ordine modificabile."""
+
+    def __init__(self, master, files=()):
+        super().__init__(master, "Unisci PDF")
+        self.files = []
+        b = self.body
+        ttk.Label(b, text="I file vengono uniti nell'ordine dell'elenco, dall'alto in basso.").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        lf = ttk.Frame(b)
+        lf.grid(row=1, column=0, sticky="nsew")
+        self.lb = tk.Listbox(lf, width=72, height=15, selectmode="extended", activestyle="none",
+                             exportselection=False)
+        sb = ttk.Scrollbar(lf, command=self.lb.yview)
+        self.lb.config(yscrollcommand=sb.set)
+        self.lb.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        self.lb.bind("<Delete>", lambda e: self.remove())
+        side = ttk.Frame(b)
+        side.grid(row=1, column=1, sticky="n", padx=(8, 0))
+        for text, cmd in (("Aggiungi file...", self.add_files), ("Aggiungi cartella...", self.add_folder)):
+            ttk.Button(side, text=text, command=cmd, width=20).pack(fill="x", pady=1)
+        self.recursive = tk.BooleanVar(value=False)
+        ttk.Checkbutton(side, text="includi sottocartelle", variable=self.recursive).pack(anchor="w", pady=(0, 8))
+        for text, cmd in (("▲ Su", lambda: self.move(-1)), ("▼ Giù", lambda: self.move(1)),
+                          ("Ordina per nome", self.sort), ("Rimuovi", self.remove), ("Svuota elenco", self.clear)):
+            ttk.Button(side, text=text, command=cmd, width=20).pack(fill="x", pady=1)
+        self.bookmarks = tk.BooleanVar(value=False)
+        ttk.Checkbutton(b, text="Aggiungi un segnalibro con il nome di ogni file", variable=self.bookmarks).grid(
+            row=2, column=0, sticky="w", pady=(8, 0))
+        self.count = ttk.Label(b, text="", foreground="#555")
+        self.count.grid(row=3, column=0, sticky="w")
+        self.buttons("Unisci")
+        self._add(files)
+
+    def _label(self, path):
+        folder = os.path.dirname(path)
+        return f"{os.path.basename(path)}    —  {folder}"
+
+    def _refresh(self, select=()):
+        self.lb.delete(0, "end")
+        for p in self.files:
+            self.lb.insert("end", self._label(p))
+        for i in select:
+            self.lb.selection_set(i)
+        if select:
+            self.lb.see(select[0])
+        self.count.config(text=f"{len(self.files)} file nell'elenco")
+
+    def _add(self, paths):
+        known = {os.path.normcase(os.path.abspath(p)) for p in self.files}
+        added = 0
+        for p in paths:
+            k = os.path.normcase(os.path.abspath(p))
+            if k not in known:
+                known.add(k)
+                self.files.append(p)
+                added += 1
+        self._refresh()
+        return added
+
+    def add_files(self):
+        paths = filedialog.askopenfilenames(parent=self, title="Scegli i PDF da unire",
+                                            filetypes=[("PDF", "*.pdf"), ("Tutti", "*.*")])
+        if paths:
+            self._add(sorted(self.tk.splitlist(paths) if isinstance(paths, str) else paths, key=natural_key))
+
+    def add_folder(self):
+        folder = filedialog.askdirectory(parent=self, title="Cartella con i PDF da unire")
+        if not folder:
+            return
+        try:
+            found = list_pdfs(folder, self.recursive.get())
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Impossibile leggere la cartella:\n\n{exc}", parent=self)
+            return
+        if not found:
+            messagebox.showinfo(APP_NAME, "Nella cartella non ci sono file PDF.", parent=self)
+            return
+        self._add(found)
+
+    def move(self, step):
+        sel = list(self.lb.curselection())
+        if not sel:
+            return
+        if (step < 0 and sel[0] == 0) or (step > 0 and sel[-1] == len(self.files) - 1):
+            return
+        for i in (sel if step < 0 else reversed(sel)):
+            self.files[i], self.files[i + step] = self.files[i + step], self.files[i]
+        self._refresh([i + step for i in sel])
+
+    def sort(self):
+        self.files.sort(key=lambda p: natural_key(os.path.basename(p)))
+        self._refresh()
+
+    def remove(self):
+        sel = set(self.lb.curselection())
+        self.files = [p for i, p in enumerate(self.files) if i not in sel]
+        self._refresh()
+
+    def clear(self):
+        self.files = []
+        self._refresh()
+
+    def _ok(self):
+        if len(self.files) < 2:
+            messagebox.showwarning(APP_NAME, "Aggiungi almeno due file da unire.", parent=self)
+            return
+        self.result = (list(self.files), bool(self.bookmarks.get()))
+        self.destroy()
+
+
 SANITIZE_ITEMS = [  # chiave, descrizione, attivo di default
     ("meta", "Metadati: autore, titolo, oggetto, parole chiave, programma, date (anche XMP)", True),
     ("annots", "Commenti e annotazioni: note, evidenziazioni, timbri, disegni a mano", True),
@@ -1229,6 +1342,34 @@ class Cancelled(Exception):
 # ----------------------------------------------------------------------------
 # Lavori pesanti (girano nel thread; la UI resta bloccata dalla finestra modale)
 # ----------------------------------------------------------------------------
+def add_redaction(page, rect, fill, label=False, text_color=(1, 1, 1)):
+    """Prepara un omissis sull'area (coordinate della pagina non ruotata)."""
+    if label:
+        fs = max(4, min(12, rect.height * 0.6))
+        page.add_redact_annot(rect, text="OMISSIS", fontname="hebo", fontsize=fs,
+                              fill=fill, text_color=text_color, align=fitz.TEXT_ALIGN_CENTER)
+    else:
+        page.add_redact_annot(rect, fill=fill)
+
+
+def redact_area(page, rect, fill, label=False, text_color=(1, 1, 1)):
+    """Omissis definitivo: testo, grafica e pixel delle immagini sotto l'area vengono eliminati."""
+    add_redaction(page, rect, fill, label, text_color)
+    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
+
+
+def pdf_bytes(doc):
+    """Contenuto del PDF da salvare, con i caratteri inseriti ridotti ai soli glifi usati."""
+    data = doc.tobytes(garbage=3, deflate=True)
+    try:
+        tmp = fitz.open("pdf", data)
+        tmp.subset_fonts()
+        data = tmp.tobytes(garbage=3, deflate=True)
+    except Exception:
+        pass
+    return data
+
+
 def ocr_worker(data, opts, tessdir):
     def work(report, cancelled):
         src = fitz.open("pdf", data)
@@ -1319,6 +1460,68 @@ def compress_worker(data, dpi, quality):
     return work
 
 
+def natural_key(text):
+    """Ordine "naturale": file2 prima di file10, senza distinzione tra maiuscole e minuscole."""
+    return [int(t) if t.isdigit() else t.casefold() for t in re.split(r"(\d+)", text)]
+
+
+def list_pdfs(folder, recursive=False):
+    """PDF contenuti in una cartella (ed eventualmente nelle sottocartelle), in ordine naturale."""
+    found = []
+    if recursive:
+        for base, dirs, files in os.walk(folder):
+            found += [os.path.join(base, f) for f in files if f.lower().endswith(".pdf")]
+    else:
+        found = [os.path.join(folder, f) for f in os.listdir(folder)
+                 if f.lower().endswith(".pdf") and os.path.isfile(os.path.join(folder, f))]
+    return sorted(found, key=lambda p: natural_key(os.path.relpath(p, folder)))
+
+
+def merge_worker(files, bookmarks=False):
+    """Unisce i PDF nell'ordine dato. files = [(percorso, password o None)].
+    Restituisce (PDF unito, riepilogo {"merged": [(nome, pagine)], "skipped": [(nome, motivo)]})."""
+    def work(report, cancelled):
+        out = fitz.open()
+        toc, merged, skipped = [], [], []
+        n = len(files)
+        for i, (path, pwd) in enumerate(files):
+            if cancelled():
+                raise Cancelled()
+            name = os.path.basename(path)
+            report(i, n, f"Unione di {name} ({i + 1} di {n})...")
+            try:
+                src = fitz.open(path)
+            except Exception:
+                skipped.append((name, "file non leggibile o danneggiato"))
+                continue
+            try:
+                if not src.is_pdf:
+                    skipped.append((name, "non è un PDF"))
+                    continue
+                if src.needs_pass and not (pwd and src.authenticate(pwd)):
+                    skipped.append((name, "protetto da password"))
+                    continue
+                if len(src) == 0:
+                    skipped.append((name, "nessuna pagina"))
+                    continue
+                start = len(out)
+                out.insert_pdf(src)
+                merged.append((name, len(src)))
+                if bookmarks:
+                    toc.append([1, os.path.splitext(name)[0], start + 1])
+            except Exception as exc:
+                skipped.append((name, f"errore durante l'unione ({exc})"))
+            finally:
+                src.close()
+        if not merged:
+            raise ValueError("nessun file è stato unito.\n" + "\n".join(f"{a}: {b}" for a, b in skipped))
+        if toc:
+            out.set_toc(toc)
+        report(n, n, "Salvataggio...")
+        return out.tobytes(garbage=3, deflate=True), dict(merged=merged, skipped=skipped)
+    return work
+
+
 def _proc_main(kind, in_path, out_path, args, q):
     """Eseguito in un processo separato: l'OCR blocca l'interprete Python per tutto il tempo del
     riconoscimento, quindi lo si tiene fuori dal processo della finestra, che resta reattiva."""
@@ -1329,11 +1532,14 @@ def _proc_main(kind, in_path, out_path, args, q):
         except ImportError:
             import fitz as _f
         fitz = _f
-        with open(in_path, "rb") as fh:
-            data = fh.read()
-        work = ocr_worker(data, *args) if kind == "ocr" else compress_worker(data, *args)
+        if kind == "merge":
+            work = merge_worker(*args)
+        else:
+            with open(in_path, "rb") as fh:
+                data = fh.read()
+            work = ocr_worker(data, *args) if kind == "ocr" else compress_worker(data, *args)
         res = work(lambda i, n, msg: q.put(("prog", i, n, msg)), lambda: False)
-        out, extra = res if kind == "ocr" else (res, None)
+        out, extra = res if kind in ("ocr", "merge") else (res, None)
         with open(out_path, "wb") as fh:
             fh.write(out)
         q.put(("done", extra))
@@ -1498,6 +1704,7 @@ MODES = {
 class PdfPaperApp:
     def __init__(self, root):
         self.root = root
+        self.dnd = getattr(root, "pdfpaper_dnd", False)  # trascinamento dei file disponibile
         self.doc = None
         self.path = None
         self.page_no = 0
@@ -1521,6 +1728,8 @@ class PdfPaperApp:
         self._form_cache, self._form_cache_key = [], None
         self._form_entry = None  # casella di testo aperta sopra un campo
         self._form_commits = 0
+        self._place = None       # testo in attesa di posizionamento (riquadro spostabile)
+        self.new_name = None     # nome proposto al salvataggio di un documento nuovo (es. PDF unito)
         self.mode = tk.StringVar(value="view")
         self.settings = load_settings()
         self.redact_label = tk.BooleanVar(value=self.settings.get("omissis_scritta", True))
@@ -1547,6 +1756,8 @@ class PdfPaperApp:
         f.add_command(label="Apri...", accelerator="Ctrl+O", command=self.open_file)
         f.add_command(label="Salva", accelerator="Ctrl+S", command=self.save)
         f.add_command(label="Salva con nome...", accelerator="Ctrl+Maiusc+S", command=self.save_as)
+        f.add_separator()
+        f.add_command(label="Unisci PDF...", command=self.merge_pdfs)
         f.add_separator()
         f.add_command(label="Chiudi documento", command=self.close_doc)
         f.add_command(label="Esci", command=self.quit)
@@ -1694,6 +1905,7 @@ class PdfPaperApp:
         btn(g, "⇅ Sposta pagina", self.move_page, "Sposta la pagina corrente in un'altra posizione")
 
         g = group(2, "Documento")
+        btn(g, "📑 Unisci PDF", self.merge_pdfs, "Unisci più PDF o tutti i PDF di una cartella in un unico file")
         btn(g, "🔍 OCR", self.run_ocr, "Rendi ricercabile un PDF scansionato")
         btn(g, "🗜 Comprimi", self.compress, "Riduci il peso del file")
         btn(g, "📄 Estrai testo", self.extract_text, "Mostra e salva tutto il testo del documento")
@@ -1765,12 +1977,17 @@ class PdfPaperApp:
         r.bind("<Control-v>", lambda e: self._key(e, lambda: self.paste(use_hover=True)))
         r.bind("<Control-a>", lambda e: self._key(e, self.select_all))
         r.bind("<Delete>", lambda e: self._key(e, self.delete_selection))
+        r.bind("<Return>", lambda e: self._place_enter(e))
+        r.bind("<KP_Enter>", lambda e: self._place_enter(e))
+        for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, -1), ("Down", 0, 1)):
+            r.bind(f"<{key}>", lambda e, dx=dx, dy=dy: self._place_key(e, dx, dy))
         self.pages_lb.bind("<Delete>", lambda e: (self.delete_pages(), "break")[1])
 
     def _show_welcome(self):
         self.canvas.delete("all")
         self.canvas.create_text(20, 20, anchor="nw", fill="#e0e0e0", font=("Segoe UI", 13),
-                                text="Apri un PDF con  File → Apri  (Ctrl+O)")
+                                text="Apri un PDF con  File → Apri  (Ctrl+O)"
+                                     + ("\noppure trascinalo qui dentro" if self.dnd else ""))
 
     def _update_status(self):
         hint = MODES[self.mode.get()][1]
@@ -1792,6 +2009,7 @@ class PdfPaperApp:
 
     def _confirm_discard(self):
         self._form_close_editor(True)
+        self._place_finish(True)
         if self.doc and self.dirty:
             r = messagebox.askyesnocancel(APP_NAME, "Il documento è stato modificato. Salvare le modifiche?")
             if r is None:
@@ -1818,18 +2036,97 @@ class PdfPaperApp:
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Impossibile aprire il file:\n\n{exc}")
             return
-        self.doc, self.path = doc, path
-        self.page_no, self.history, self.dirty = 0, [], False
+        self._set_document(doc, path)
+
+    def _set_document(self, doc, path, dirty=False, new_name=None):
+        self.doc, self.path, self.new_name = doc, path, new_name
+        self.page_no, self.history, self.dirty = 0, [], dirty
         self.doc_font, self._clip_meta = None, None
         self.form, self._form_entry = {}, None
         self._gen += 1
         self.refresh(rebuild_list=True)
         self.root.after(50, self.fit_width)
 
+    # ---------------------------------------------------------------- unisci
+    def merge_pdfs(self, files=None):
+        res = MergeDialog(self.root, files or []).show()
+        if not res:
+            return
+        paths, bookmarks = res
+        items = []
+        for path in paths:  # le password si chiedono qui, prima di avviare l'unione
+            pwd = None
+            try:
+                d = fitz.open(path)
+                if d.needs_pass:
+                    pwd = simpledialog.askstring(APP_NAME, f"\"{os.path.basename(path)}\" è protetto.\n"
+                                                           "Password (lascia vuoto per saltare il file):",
+                                                 show="*", parent=self.root)
+                    if pwd and not d.authenticate(pwd):
+                        messagebox.showwarning(APP_NAME, "Password errata: il file verrà saltato.")
+                        pwd = None
+                d.close()
+            except Exception:
+                pass  # file illeggibile: viene indicato nel riepilogo finale
+            items.append((path, pwd))
+        if not self._confirm_discard():
+            return
+
+        def done(data, info):
+            self._set_document(fitz.open("pdf", data), None, dirty=True, new_name="PDF_unito.pdf")
+            pages = sum(n for _, n in info["merged"])
+            msg = f"Uniti {len(info['merged'])} file ({pages} pagine)."
+            if info["skipped"]:
+                msg += "\n\nNon uniti:\n" + "\n".join(f"• {a}: {b}" for a, b in info["skipped"][:15])
+                if len(info["skipped"]) > 15:
+                    msg += f"\n… e altri {len(info['skipped']) - 15}"
+            msg += "\n\nIl risultato è un documento nuovo: ricorda di salvarlo."
+            (messagebox.showwarning if info["skipped"] else messagebox.showinfo)(APP_NAME, msg)
+
+        ProcessJob(self.root, "Unione in corso", "merge", b"", (items, bookmarks), done,
+                   start_msg="Preparazione dell'unione...")
+
+    # ---------------------------------------------------------------- trascinamento
+    def enable_drop(self):
+        """Accetta i file PDF trascinati sulla finestra (richiede tkinterdnd2; altrimenti nulla)."""
+        if not self.dnd:
+            return
+        cmd = self.root.register(self._on_drop)
+        for w in (self.root, self.canvas, self.pages_lb):
+            try:
+                self.root.tk.call("tkdnd::drop_target", "register", w._w, ("DND_Files",))
+                self.root.tk.call("bind", w._w, "<<Drop:DND_Files>>", cmd + " %D")
+            except tk.TclError:
+                pass
+
+    def _on_drop(self, data):
+        try:
+            files = list(self.root.tk.splitlist(data))
+        except tk.TclError:
+            files = [data]
+        pdfs = []
+        for f in files:
+            if os.path.isdir(f):  # cartella trascinata: i PDF che contiene
+                try:
+                    pdfs += list_pdfs(f)
+                except OSError:
+                    pass
+            elif f.lower().endswith(".pdf") and os.path.isfile(f):
+                pdfs.append(f)
+        # si apre dopo aver chiuso il trascinamento: un messaggio aperto qui bloccherebbe Esplora file
+        if len(pdfs) == 1:
+            self.root.after(50, lambda: self.open_file(pdfs[0]))
+        elif pdfs:  # più file: finestra Unisci PDF già con l'elenco
+            self.root.after(50, lambda: self.merge_pdfs(pdfs))
+        else:
+            self.root.after(50, lambda: messagebox.showwarning(APP_NAME, "Trascina un file PDF."))
+        return "copy"
+
     def close_doc(self):
         if not self._confirm_discard():
             return
         self.doc, self.path, self.history, self.dirty = None, None, [], False
+        self.new_name = None
         self.doc_font, self._clip_meta = None, None
         self.form, self._form_entry = {}, None
         self.pages_lb.delete(0, "end")
@@ -1840,17 +2137,11 @@ class PdfPaperApp:
         self._update_status()
 
     def _pdf_bytes(self):
-        data = self.doc.tobytes(garbage=3, deflate=True)
-        try:  # su una copia: i caratteri di Windows inseriti vengono ridotti ai soli glifi usati
-            tmp = fitz.open("pdf", data)
-            tmp.subset_fonts()
-            data = tmp.tobytes(garbage=3, deflate=True)
-        except Exception:
-            pass
-        return data
+        return pdf_bytes(self.doc)
 
     def save(self):
         self._form_close_editor(True)
+        self._place_finish(True)
         if not self._need_doc():
             return False
         if not self.path:
@@ -1859,9 +2150,13 @@ class PdfPaperApp:
 
     def save_as(self):
         self._form_close_editor(True)
+        self._place_finish(True)
         if not self._need_doc():
             return False
-        initial = os.path.splitext(os.path.basename(self.path or "documento.pdf"))[0] + "_modificato.pdf"
+        if self.path:
+            initial = os.path.splitext(os.path.basename(self.path))[0] + "_modificato.pdf"
+        else:
+            initial = self.new_name or "documento.pdf"
         path = filedialog.asksaveasfilename(title="Salva con nome", defaultextension=".pdf",
                                             initialfile=initial, filetypes=[("PDF", "*.pdf")])
         if not path:
@@ -1889,6 +2184,8 @@ class PdfPaperApp:
 
     # ---------------------------------------------------------------- undo
     def _checkpoint(self):
+        if self._place is not None:  # un'altra modifica: prima si scrive il testo in attesa
+            self._place_finish(True)
         data = self.doc.tobytes(garbage=1) if self.form else self.doc.tobytes()
         self.history.append((data, self._form_snapshot()))
         if len(self.history) > MAX_UNDO:
@@ -1902,6 +2199,9 @@ class PdfPaperApp:
         self.refresh(rebuild_list=rebuild_list)
 
     def undo(self):
+        if self._place is not None:  # Ctrl+Z durante il posizionamento: annulla solo il testo in attesa
+            self._place_finish(False)
+            return
         if not self.doc or not self.history:
             return
         entry = self.history.pop()
@@ -1919,6 +2219,8 @@ class PdfPaperApp:
     def refresh(self, rebuild_list=False):
         if self._form_entry is not None:
             self._form_close_editor(True)  # salva il campo in modifica prima di ridisegnare
+        if self._place is not None and (not self.doc or self._place["pno"] != self.page_no):
+            self._place_finish(True)  # cambio pagina: il testo in attesa viene scritto dov'è
         if not self.doc:
             return
         n = len(self.doc)
@@ -1950,6 +2252,8 @@ class PdfPaperApp:
         self._update_status()
         if self.mode.get() == "form":
             self._draw_form_overlay()
+        if self._place is not None:
+            self._place_draw()
 
     def goto(self, n):
         if self.doc and 0 <= n < len(self.doc):
@@ -2010,6 +2314,12 @@ class PdfPaperApp:
         self._form_close_editor(True)
         self.canvas.focus_set()
         x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
+        if self._place is not None:
+            if self._place_hit(x, y):
+                self._drag = ("place", x, y, False)  # trascinamento del riquadro (un clic conferma)
+            else:
+                self._place_finish(True)             # clic fuori dal riquadro: conferma
+            return
         self._ctx_pt = self._canvas_to_vis(x, y)
         mode = self.mode.get()
         if mode == "form":
@@ -2038,7 +2348,11 @@ class PdfPaperApp:
             return
         kind = self._drag[0]
         x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
-        if kind == "pan":
+        if kind == "place":
+            _, lx, ly, _moved = self._drag
+            self._drag = ("place", x, y, True)
+            self._place_move((x - lx) / self.zoom, (y - ly) / self.zoom)
+        elif kind == "pan":
             self.canvas.scan_dragto(e.x, e.y, gain=1)
         elif kind == "sel-empty" and self.words:
             # trascinamento iniziato fuori dal testo: si parte dalla parola più vicina
@@ -2054,6 +2368,10 @@ class PdfPaperApp:
 
     def _on_release(self, e):
         drag, self._drag = self._drag, None
+        if drag and drag[0] == "place":
+            if not drag[3]:
+                self._place_finish(True)  # clic senza spostare: conferma
+            return
         if drag and drag[0] == "sel":
             n = self._sel_count()
             if n:
@@ -2081,8 +2399,13 @@ class PdfPaperApp:
 
     def _on_hover(self, e):
         self._hover = (self.canvas.canvasx(e.x), self.canvas.canvasy(e.y))
+        if self._place is not None:
+            self.canvas.config(cursor="fleur" if self._place_hit(*self._hover) else "")
 
     def _escape(self):
+        if self._place is not None:
+            self._place_finish(False)
+            return
         self._set_selection(None)
         self.mode.set("view")
 
@@ -2309,13 +2632,7 @@ class PdfPaperApp:
         if vis.height < size * 1.5:
             vis.y0 = max(10, H - 10 - size * 3)
         rect = (vis * page.derotation_matrix).normalize()
-        self._checkpoint()
-        used = self._insert_fit(page, rect, text, size, font, color, 0)
-        self._changed()
-        msg = "Testo incollato"
-        if used < size:
-            msg += f" (ridotto a {used} pt per entrare nella pagina)"
-        self.status.config(text=msg + " · per cambiarlo usa 'Modifica testo'")
+        self._place_start(rect, text, size, font, color, 0, done="Testo incollato", tight=True)
 
     def _insert_image_at(self, pt, filename=None, stream=None, px_size=None):
         page = self.doc[self.page_no]
@@ -2575,6 +2892,7 @@ class PdfPaperApp:
 
     def _on_mode_change(self):
         self._form_close_editor(True)
+        self._place_finish(True)
         if self.mode.get() == "form" and self.doc:
             self._draw_form_overlay()
         else:
@@ -2767,18 +3085,150 @@ class PdfPaperApp:
         page.insert_textbox(big, text, fontsize=4, color=color, align=align, rotate=page.rotation, **fkw)
         return 4
 
+    # ---------------------------------------------------------------- testo da posizionare
+    def _place_start(self, rect, text, size, font, color, align, cover=None, done="Testo inserito",
+                     tight=False):
+        """Mostra il testo in un riquadro spostabile sopra la pagina. Viene scritto davvero solo
+        con Invio o un clic; Esc lo annulla. cover = (area, colore) da coprire (modifica testo)."""
+        self._place_finish(True)
+        self._place = dict(pno=self.page_no, rect=fitz.Rect(rect), text=text, size=size, font=font,
+                           color=color, align=align, cover=cover, done=done, dx=0.0, dy=0.0,
+                           img=None, img_zoom=None, used=size)
+        if tight:
+            self._place_shrink()
+        self._place_draw()
+        self.canvas.focus_set()
+        self.status.config(text="Trascina il riquadro o usa le frecce (Maiusc: 10 pt) per allinearlo · "
+                                "Invio o clic: conferma · Esc: annulla")
+
+    def _place_page(self):
+        """Pagina di prova vuota, con le stesse dimensioni e rotazione di quella vera."""
+        page = self.doc[self._place["pno"]]
+        tmp = fitz.open()
+        tp = tmp.new_page(width=page.mediabox.width, height=page.mediabox.height)
+        try:
+            tp.set_cropbox(page.cropbox)
+        except Exception:
+            pass
+        if page.rotation:
+            tp.set_rotation(page.rotation)
+        return tmp, tp
+
+    def _place_shrink(self):
+        """Riduce il riquadro all'ingombro reale del testo (per il testo incollato, pagine non ruotate)."""
+        p = self._place
+        try:
+            tmp, tp = self._place_page()
+            if tp.rotation:
+                return
+            self._insert_fit(tp, p["rect"], p["text"], p["size"], p["font"], p["color"], p["align"])
+            boxes = [fitz.Rect(b[:4]) for b in tp.get_text("blocks")]
+            if not boxes:
+                return
+            r = boxes[0]
+            for b in boxes[1:]:
+                r |= b
+            old = p["rect"]
+            p["rect"] = fitz.Rect(old.x0, old.y0, min(old.x1, r.x1 + 6), min(old.y1, r.y1 + 6))
+        except Exception:
+            pass
+
+    def _place_vis(self):
+        """Riquadro come lo si vede sulla pagina, già spostato."""
+        p = self._place
+        page = self.doc[p["pno"]]
+        vr = fitz.Rect(p["rect"]) * page.rotation_matrix
+        return fitz.Rect(vr.x0 + p["dx"], vr.y0 + p["dy"], vr.x1 + p["dx"], vr.y1 + p["dy"])
+
+    def _place_draw(self):
+        p = self._place
+        self.canvas.delete("placing")
+        if p is None or not self.doc or p["pno"] != self.page_no:
+            return
+        page = self.doc[p["pno"]]
+        z, ox, oy = self.zoom, self._ox, self._oy
+        if p["img"] is None or p["img_zoom"] != z:
+            tmp, tp = self._place_page()
+            p["used"] = self._insert_fit(tp, p["rect"], p["text"], p["size"], p["font"], p["color"], p["align"])
+            pix = tp.get_pixmap(matrix=fitz.Matrix(z, z), alpha=True)  # solo il testo, sfondo trasparente
+            p["img"] = tk.PhotoImage(data=pix.tobytes("png"))
+            p["img_zoom"] = z
+        if p["cover"]:  # anteprima della copertura del testo originale
+            cr = fitz.Rect(p["cover"][0]) * page.rotation_matrix
+            self.canvas.create_rectangle(ox + cr.x0 * z, oy + cr.y0 * z, ox + cr.x1 * z, oy + cr.y1 * z,
+                                         fill=rgb_hex(p["cover"][1]), outline="", tags="placing")
+        self.canvas.create_image(ox + p["dx"] * z, oy + p["dy"] * z, anchor="nw", image=p["img"], tags="placing")
+        vr = self._place_vis()
+        self.canvas.create_rectangle(ox + vr.x0 * z - 1, oy + vr.y0 * z - 1, ox + vr.x1 * z + 1, oy + vr.y1 * z + 1,
+                                     outline="#1565c0", width=2, dash=(6, 3), tags="placing")
+
+    def _place_hit(self, x, y):
+        if self._place is None or self._place["pno"] != self.page_no:
+            return False
+        vr, z = self._place_vis(), self.zoom
+        m = 4
+        return (self._ox + vr.x0 * z - m <= x <= self._ox + vr.x1 * z + m and
+                self._oy + vr.y0 * z - m <= y <= self._oy + vr.y1 * z + m)
+
+    def _place_move(self, dvx, dvy):
+        p = self._place
+        if p is None:
+            return
+        page = self.doc[p["pno"]]
+        pr = page.rect
+        vr = fitz.Rect(p["rect"]) * page.rotation_matrix
+        p["dx"] = max(pr.x0 - vr.x0, min(pr.x1 - vr.x1, p["dx"] + dvx))  # resta dentro la pagina
+        p["dy"] = max(pr.y0 - vr.y0, min(pr.y1 - vr.y1, p["dy"] + dvy))
+        self._place_draw()
+
+    def _place_key(self, e, dx, dy):
+        if self._place is None or isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text, ttk.Spinbox,
+                                                        ttk.Combobox, tk.Listbox)):
+            return None
+        step = 10 if e.state & 0x0001 else 1  # Maiusc: 10 punti
+        self._place_move(dx * step, dy * step)
+        return "break"
+
+    def _place_enter(self, e):
+        if self._place is None or isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text, ttk.Spinbox,
+                                                        ttk.Combobox)):
+            return None
+        self._place_finish(True)
+        return "break"
+
+    def _place_finish(self, commit=True):
+        """Scrive nella pagina il testo in attesa (commit) oppure lo scarta."""
+        p, self._place = self._place, None
+        if p is None:
+            return
+        self.canvas.delete("placing")
+        self.canvas.config(cursor="")
+        if not commit or not self.doc or p["pno"] >= len(self.doc):
+            self._update_status()
+            return
+        page = self.doc[p["pno"]]
+        vr = fitz.Rect(p["rect"]) * page.rotation_matrix
+        vr = fitz.Rect(vr.x0 + p["dx"], vr.y0 + p["dy"], vr.x1 + p["dx"], vr.y1 + p["dy"])
+        rect = (vr * page.derotation_matrix).normalize()
+        self._checkpoint()
+        if p["cover"]:
+            page.add_redact_annot(p["cover"][0], fill=p["cover"][1])
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        used = self._insert_fit(page, rect, p["text"], p["size"], p["font"], p["color"], p["align"])
+        self._changed()
+        msg = p["done"]
+        if used < p["size"]:
+            msg += f" (ridotto a {used} pt per entrare nel riquadro)"
+        self.status.config(text=msg)
+
     def _do_add_text(self, rect):
         style = self._detect_style(rect, near=True)
         res = TextDialog(self.root, "Aggiungi testo", style=style).show()
         self._remember_font(style, res)
         if not res or not res["text"].strip():
             return
-        self._checkpoint()
-        page = self.doc[self.page_no]
-        used = self._insert_fit(page, rect, res["text"], res["size"], res["font"], res["color"], res["align"])
-        self._changed()
-        if used < res["size"]:
-            self.status.config(text=f"Testo ridotto a {used} pt per entrare nel riquadro")
+        self._place_start(rect, res["text"], res["size"], res["font"], res["color"], res["align"],
+                          done="Testo aggiunto")
 
     def _do_edit_text(self, rect):
         page = self.doc[self.page_no]
@@ -2793,12 +3243,14 @@ class PdfPaperApp:
         if res is None:
             return
         fill = self._bg_color(rect)  # colore di sfondo appena fuori dall'area
-        self._checkpoint()
-        page.add_redact_annot(rect, fill=fill)
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-        if res["text"].strip():
-            self._insert_fit(page, rect, res["text"], res["size"], res["font"], res["color"], res["align"])
-        self._changed()
+        if not res["text"].strip():  # testo cancellato: si copre solo l'area
+            self._checkpoint()
+            page.add_redact_annot(rect, fill=fill)
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+            self._changed()
+            return
+        self._place_start(rect, res["text"], res["size"], res["font"], res["color"], res["align"],
+                          cover=(fitz.Rect(rect), fill), done="Testo modificato")
 
     def _do_add_image(self, rect):
         path = filedialog.askopenfilename(title="Scegli immagine", filetypes=[
@@ -2851,18 +3303,12 @@ class PdfPaperApp:
                 self.redact_label.set(True)
 
     def _add_redaction(self, page, rect):
-        if self.redact_label.get():
-            fs = max(4, min(12, rect.height * 0.6))
-            page.add_redact_annot(rect, text="OMISSIS", fontname="hebo", fontsize=fs,
-                                  fill=self.redact_fill, text_color=self.redact_fg, align=fitz.TEXT_ALIGN_CENTER)
-        else:
-            page.add_redact_annot(rect, fill=self.redact_fill)
+        add_redaction(page, rect, self.redact_fill, self.redact_label.get(), self.redact_fg)
 
     def _do_redact(self, rect):
         page = self.doc[self.page_no]
         self._checkpoint()
-        self._add_redaction(page, rect)
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
+        redact_area(page, rect, self.redact_fill, self.redact_label.get(), self.redact_fg)
         self._changed()
 
     # ---------------------------------------------------------------- pagine
@@ -3134,6 +3580,13 @@ def main():
             pass
     root = tk.Tk()
     root.withdraw()
+    root.pdfpaper_dnd = False
+    try:  # trascinamento dei file da Esplora risorse (facoltativo)
+        from tkinterdnd2 import TkinterDnD
+        TkinterDnD._require(root)
+        root.pdfpaper_dnd = True
+    except Exception:
+        pass
     try:  # icona finestra
         if sys.platform.startswith("win"):
             root.iconbitmap(default=resource("assets", "pdf_icon.ico"))
@@ -3188,6 +3641,7 @@ def main():
         root.deiconify()
         if sys.platform.startswith("win"):
             root.state("zoomed")
+        root.after(200, app.enable_drop)
         args = [a for a in sys.argv[1:] if a.lower().endswith(".pdf") and os.path.isfile(a)]
         if args:
             root.after(200, lambda: app.open_file(args[0]))

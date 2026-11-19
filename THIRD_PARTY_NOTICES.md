@@ -7,6 +7,7 @@ nella cartella `licenze` della distribuzione. Nessuno di questi componenti trasm
 |---|---|---|---|
 | PyMuPDF (con MuPDF e Tesseract integrati) | lettura, modifica, OCR, omissis e compressione dei PDF | GNU AGPL v3 | https://github.com/pymupdf/PyMuPDF |
 | Pillow | ricompressione delle immagini | MIT-CMU (HPND) | https://python-pillow.org |
+| tkinterdnd2 (con tkdnd) | trascinamento dei file nella finestra | MIT (tkinterdnd2), licenza BSD-style (tkdnd) | https://github.com/Eliav2/tkinterdnd2 |
 | Python | ambiente di esecuzione | PSF License | https://www.python.org |
 | Tcl/Tk (Tkinter) | interfaccia grafica | licenza BSD-style di Tcl/Tk | https://www.tcl-lang.org |
 | PyInstaller (bootloader) | avvio dell'eseguibile | GPL v2 con eccezione per il bootloader | https://pyinstaller.org |

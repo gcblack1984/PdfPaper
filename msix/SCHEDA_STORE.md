@@ -67,7 +67,7 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 > elimini anche metadati, commenti, allegati e altri dati nascosti prima dell'invio.
 >
 > PAGINE, IMMAGINI E COMPRESSIONE
-> Inserisci pagine vuote, pagine da altri PDF o immagini come nuove pagine; elimina, sposta e ruota le
+> Unisci più PDF, o tutti i PDF di una cartella, in un unico documento. Inserisci pagine vuote, pagine da altri PDF o immagini come nuove pagine; elimina, sposta e ruota le
 > pagine di 90° o 180° con un clic. Inserisci firme, timbri e loghi. Riduci il peso dei file per
 > l'invio via e-mail o PEC.
 >
@@ -88,7 +88,7 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 4. Omissis reali: il contenuto sotto l'area viene eliminato dal file
 5. Colori personalizzabili per sfondo e scritta dell'omissis
 6. Inserimento di immagini, firme e timbri
-7. Inserimento, eliminazione, spostamento e rotazione delle pagine (90° e 180°)
+7. Unione di più PDF o di tutti i PDF di una cartella; inserimento, eliminazione, spostamento e rotazione delle pagine
 8. Compressione dei PDF su quattro livelli
 9. Selezione del testo, copia, taglia e incolla (anche immagini)
 10. Menu del tasto destro con le operazioni più comuni
@@ -101,11 +101,11 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 
 **Copyright:** © 2026 Giovanni Ciccarese. Software libero con licenza GNU AGPL v3.
 
-**Novità di questa versione** (per l'aggiornamento 1.2.0):
+**Novità di questa versione** (per l'aggiornamento 1.3.0):
 
-> Nuovo strumento "Compila modulo": PdfPaper riconosce da solo i riquadri, le caselle a carattere singolo
-> (codice fiscale, CAP, POD, date) e le caselle di spunta dei moduli PDF, anche senza campi compilabili.
-> Clicchi un campo e scrivi: ogni carattere va nella sua casella. Tab per passare al campo successivo.
+> Nuova funzione "Unisci PDF": metti insieme più file, o tutti i PDF di una cartella, in un unico documento.
+> Ora puoi aprire un PDF trascinandolo dentro la finestra di PdfPaper. Il testo che aggiungi, modifichi o
+> incolli compare prima in un riquadro spostabile: lo allinei con il mouse o con le frecce e confermi con Invio.
 
 ---
 
@@ -136,7 +136,7 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 > file, not just covered. Choose the background and label colors.
 >
 > PAGES, IMAGES AND COMPRESSION
-> Insert blank pages, pages from other PDFs or images as new pages; delete, move and rotate pages by 90°
+> Merge several PDFs, or every PDF in a folder, into one document. Insert blank pages, pages from other PDFs or images as new pages; delete, move and rotate pages by 90°
 > or 180° in one click. Add signatures, stamps and logos. Shrink files for e-mail.
 >
 > PRIVACY
@@ -151,12 +151,12 @@ Testi pronti da copiare in Partner Center. Ogni campo rispetta i limiti di lungh
 3. True redaction: content under the area is removed from the file
 4. Custom colors for redaction background and label
 5. Automatic form filling: text boxes, one-character boxes and check boxes
-5. Insert images, signatures and stamps
-6. Insert, delete, move and rotate pages (90° and 180°)
-7. PDF compression with four levels
-8. Text selection with copy, cut and paste (images too)
-9. Works offline with no account: documents stay on your PC
-10. Free and open source
+6. Insert images, signatures and stamps
+7. Merge several PDFs or a whole folder; insert, delete, move and rotate pages
+8. PDF compression with four levels
+9. Text selection with copy, cut and paste (images too)
+10. Works offline with no account: documents stay on your PC
+11. Free and open source
 
 **Search terms:** `pdf editor` · `ocr` · `edit pdf` · `redact pdf` · `compress pdf` · `scanned pdf` · `pdf pages`
 

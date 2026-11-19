@@ -1,0 +1,4 @@
+# Strumenti usati solo per le verifiche automatiche (non fanno parte del programma distribuito)
+pytest>=8
+bandit>=1.7
+pip-audit>=2.7

@@ -1,5 +1,23 @@
 # Novità / Changelog
 
+## 1.3.0 (novembre 2026)
+
+- **Trascinamento dei file**: con PdfPaper aperto si può trascinare un PDF da Esplora file dentro la finestra
+  per aprirlo, senza passare da File → Apri. Se il documento aperto ha modifiche non salvate, il programma
+  chiede prima se salvarle.
+- **Unisci PDF** (pulsante nel gruppo Documento e menu File): unisce più PDF in un documento nuovo.
+  Si possono scegliere più file insieme o aggiungere tutti i PDF di una cartella (anche delle sottocartelle),
+  sistemare l'ordine (Su/Giù, Ordina per nome con ordine naturale: "allegato 2" prima di "allegato 10") e,
+  a scelta, aggiungere un segnalibro per ogni file. Per i file protetti viene chiesta la password; quelli
+  illeggibili vengono saltati e indicati nel riepilogo. Trascinando più PDF o una cartella nella finestra si
+  apre Unisci PDF con i file già in elenco.
+- **Testo da posizionare**: il testo aggiunto, modificato o incollato compare prima in un riquadro
+  tratteggiato spostabile, con il suo carattere vero. Si allinea trascinandolo con il mouse o con le frecce
+  (Maiusc: passi di 10 punti) e si conferma con Invio o un clic; Esc lo annulla. Nella modifica il testo
+  originale appare già coperto e resta intatto se si annulla.
+- Verifiche automatiche a ogni versione (test delle funzioni, analisi di sicurezza del codice con Bandit,
+  vulnerabilità note delle librerie con pip-audit), con rapporto scaricabile da GitHub.
+
 ## 1.2.0 (novembre 2026)
 
 - Nuovo strumento **Compila modulo**: riconosce da solo gli spazi dei moduli PDF "disegnati" (per esempio

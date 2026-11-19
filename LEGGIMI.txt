@@ -1,4 +1,4 @@
-PdfPaper 1.2.0 - editor PDF portabile
+PdfPaper 1.3.0 - editor PDF portabile
 Creato da Giovanni CICCARESE - software libero, licenza GNU AGPL v3 (vedi LICENSE)
 ===================================
 
@@ -21,10 +21,14 @@ CREARE LA VERSIONE PORTABILE (una volta sola, su un PC Windows con Python 3.10+ 
 
 FUNZIONI
   File        Apri, Salva, Salva con nome (il file originale non viene toccato finché non salvi)
+              Per aprire un PDF puoi anche trascinarlo dentro la finestra.
+              Unisci PDF: più file o tutti i PDF di una cartella in un unico documento
   Modifica    Annulla (Ctrl+Z, fino a 20 passi)
   Strumenti sulla barra (trascina un riquadro sulla pagina):
     T+ Aggiungi testo   clic o riquadro -> testo, carattere, dimensione, colore, allineamento
     ✎  Modifica testo   riquadro attorno al testo esistente -> lo modifichi e viene sostituito
+                        Il testo nuovo compare in un riquadro spostabile: trascinalo o usa le frecce,
+                        poi Invio o clic per confermare (Esc annulla)
                         (includi tutta la riga; sulle scansioni esegui prima l'OCR)
     🖼  Immagine         riquadro -> scegli PNG/JPG/... da inserire
     █  Omissis          riquadro -> area annerita, con o senza scritta "OMISSIS".

@@ -25,6 +25,7 @@ pyinstaller --noconfirm --clean --onedir --windowed ^
   --name PdfPaper ^
   --icon assets\pdf_icon.ico ^
   --add-data "assets;assets" ^
+  --collect-all tkinterdnd2 ^
   --contents-directory lib ^
   --version-file version_info.txt ^
   --exclude-module matplotlib --exclude-module numpy --exclude-module pandas ^
